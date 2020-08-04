@@ -36,7 +36,7 @@ CompileShader(GLenum _type, ShaderSources_t const&_sources, std::string *o_log)
 
 
 ProgramPtr
-LinkProgram(ShaderBinaries_t const &_binaries)
+LinkProgram(ShaderBinaries_t const &_binaries, std::string *o_log)
 {
 	ProgramPtr result{ glCreateProgram() };
 	std::for_each(_binaries.cbegin(), _binaries.cend(), [&result](GLuint _shader) {
@@ -47,6 +47,8 @@ LinkProgram(ShaderBinaries_t const &_binaries)
 	{
         std::string log = GetShaderLog<ProgramInfoFuncs>(result);
         InsertDebugMessage(log);
+        if (o_log)
+            std::swap(log, *o_log);
 		result.reset(0u);
 	}
 	return result;

@@ -162,6 +162,17 @@ vec4_dot(Vec4_t const& _lhs, Vec4_t const& _rhs)
 }
 
 inline Mat4_t
+mat4_id()
+{
+    return Mat4_t{
+        1.f, 0.f, 0.f, 0.f,
+        0.f, 1.f, 0.f, 0.f,
+        0.f, 0.f, 1.f, 0.f,
+        0.f, 0.f, 0.f, 1.f
+    };
+}
+
+inline Mat4_t
 mat4_col(Vec4_t const& _c0, Vec4_t const& _c1, Vec4_t const& _c2, Vec4_t const& _c3)
 {
     return Mat4_t{

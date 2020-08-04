@@ -7,6 +7,7 @@
  * ----------------------------------------------------------------------------
  */
 
+#include <array>
 #include <iostream>
 #include <memory>
 
@@ -242,8 +243,13 @@ int main(int __argc, char* __argv[])
     glXMakeCurrent(display, 0, 0);
 
     UpdateEngineModule(engine_main);
+
     void* engine = nullptr;
     engine_main.init_cb(&engine);
+    struct input_t
+    {
+        std::array<int, 2> screen_size{ 0, 0 };
+    } input{};
 
     glXMakeCurrent(display, window, glx_context);
     int i = 0;
@@ -263,6 +269,7 @@ int main(int __argc, char* __argv[])
             case ConfigureNotify:
             {
                 XConfigureEvent const& xcevent = xevent.xconfigure;
+                input.screen_size = std::array<int, 2>{ xcevent.width, xcevent.height };
             } break;
 
             case ButtonPress:
@@ -336,8 +343,9 @@ int main(int __argc, char* __argv[])
         if (!run) break;
 
         UpdateEngineModule(engine_main);
+
         if (engine_main.hlib)
-            engine_main.run_frame_cb(engine, nullptr);
+            engine_main.run_frame_cb(engine, &input);
 
         glXSwapBuffers(display, window);
 

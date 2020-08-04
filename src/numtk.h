@@ -11,14 +11,16 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 
 
 namespace numtk {
 
-using Vec4_t = std::array<float, 4>;
-using Vec3_t = std::array<float, 3>;
-using Vec2_t = std::array<float, 2>;
 using Vec2i_t = std::array<int, 2>;
+using Vec3i64_t = std::array<std::int64_t, 3>;
+using Vec2_t = std::array<float, 2>;
+using Vec3_t = std::array<float, 3>;
+using Vec4_t = std::array<float, 4>;
 using Mat4_t = std::array<float, 16>;
 using Quat_t = std::array<float, 4>;
 using dQuat_t = std::array<float, 8>;
@@ -57,6 +59,24 @@ inline Vec2_t
 vec2_itof(Vec2i_t const& _in)
 {
     return Vec2_t{ (float)_in[0], (float)_in[1] };
+}
+
+inline Vec3i64_t
+vec3i64_add(Vec3i64_t const& _lhs, Vec3i64_t const& _rhs)
+{
+    return Vec3i64_t{ _lhs[0]+_rhs[0], _lhs[1]+_rhs[1], _lhs[2]+_rhs[2] };
+}
+
+inline Vec3i64_t
+vec3i64_int_mul(Vec3i64_t const& _lhs, std::int64_t _rhs)
+{
+    return Vec3i64_t{ _lhs[0]*_rhs, _lhs[1]*_rhs, _lhs[2]*_rhs };
+}
+
+inline Vec3i64_t
+vec3i64_int_div(Vec3i64_t const& _lhs, std::int64_t _rhs)
+{
+    return Vec3i64_t{ _lhs[0]/_rhs, _lhs[1]/_rhs, _lhs[2]/_rhs };
 }
 
 inline Vec3_t
@@ -103,6 +123,12 @@ vec3_cross(Vec3_t const& _lhs, Vec3_t const& _rhs)
         _lhs[2]*_rhs[0] - _lhs[0]*_rhs[2],
         _lhs[0]*_rhs[1] - _lhs[1]*_rhs[0]
     };
+}
+
+inline float
+vec3_norm(Vec3_t const& _op)
+{
+    return std::sqrt(vec3_dot(_op, _op));
 }
 
 inline Vec3_t

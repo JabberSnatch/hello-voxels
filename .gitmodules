@@ -1,0 +1,3 @@
+[submodule "src/quick_vdb"]
+	path = src/quick_vdb
+	url = git@github.com:JabberSnatch/quick_vdb.git

@@ -72,6 +72,8 @@ struct engine_module_t
     void* hlib;
     time_t last_load_time;
     void (*run_frame_cb)(void*, void*);
+    void (*init_cb)(void**);
+    void (*shutdown_cb)(void*);
 };
 void UpdateEngineModule(engine_module_t& _module);
 
@@ -239,6 +241,10 @@ int main(int __argc, char* __argv[])
 
     glXMakeCurrent(display, 0, 0);
 
+    UpdateEngineModule(engine_main);
+    void* engine = nullptr;
+    engine_main.init_cb(&engine);
+
     glXMakeCurrent(display, window, glx_context);
     int i = 0;
     float frame_time = 0.f;
@@ -331,7 +337,7 @@ int main(int __argc, char* __argv[])
 
         UpdateEngineModule(engine_main);
         if (engine_main.hlib)
-            engine_main.run_frame_cb(nullptr, nullptr);
+            engine_main.run_frame_cb(engine, nullptr);
 
         glXSwapBuffers(display, window);
 
@@ -348,6 +354,8 @@ int main(int __argc, char* __argv[])
         }
     }
     glXMakeCurrent(display, 0, 0);
+
+    engine_main.shutdown_cb(engine);
 
     glXDestroyContext(display, glx_context);
     XDestroyWindow(display, window);
@@ -391,5 +399,13 @@ void UpdateEngineModule(engine_module_t& _module)
         _module.run_frame_cb = (void(*)(void*, void*))dlsym(_module.hlib, "EngineRunFrame");
         if (!_module.run_frame_cb)
             std::cout << "EngineRunFrame not found" << std::endl;
+
+        _module.init_cb = (void(*)(void**))dlsym(_module.hlib, "EngineInit");
+        if (!_module.init_cb)
+            std::cout << "EngineInit not found" << std::endl;
+
+        _module.shutdown_cb = (void(*)(void*))dlsym(_module.hlib, "EngineShutdown");
+        if (!_module.shutdown_cb)
+            std::cout << "EngineShutdown not found" << std::endl;
     }
 }

@@ -72,15 +72,18 @@ struct engine_module_t
     char const* path;
     void* hlib;
     time_t last_load_time;
+
     void (*run_frame_cb)(void*, void*);
     void (*init_cb)(void**);
     void (*shutdown_cb)(void*);
+    void (*onreload_cb)(void*);
 };
-void UpdateEngineModule(engine_module_t& _module);
+bool UpdateEngineModule(engine_module_t& _module);
 
 int main(int __argc, char* __argv[])
 {
-    engine_module_t engine_main{ "./libengine.so", nullptr, 0u, nullptr };
+    engine_module_t engine_main{};
+    engine_main.path = "./libengine.so";
 
     Display * const display = XOpenDisplay(nullptr);
     if (!display)
@@ -242,14 +245,20 @@ int main(int __argc, char* __argv[])
 
     glXMakeCurrent(display, 0, 0);
 
+    glXMakeCurrent(display, window, glx_context);
+
     UpdateEngineModule(engine_main);
 
     void* engine = nullptr;
     engine_main.init_cb(&engine);
+    engine_main.onreload_cb(engine);
+
     struct input_t
     {
         std::array<int, 2> screen_size{ 0, 0 };
     } input{};
+
+    glXMakeCurrent(display, 0, 0);
 
     glXMakeCurrent(display, window, glx_context);
     int i = 0;
@@ -342,7 +351,8 @@ int main(int __argc, char* __argv[])
         }
         if (!run) break;
 
-        UpdateEngineModule(engine_main);
+        if (UpdateEngineModule(engine_main))
+            engine_main.onreload_cb(engine);
 
         if (engine_main.hlib)
             engine_main.run_frame_cb(engine, &input);
@@ -371,8 +381,10 @@ int main(int __argc, char* __argv[])
     return 0;
 }
 
-void UpdateEngineModule(engine_module_t& _module)
+bool UpdateEngineModule(engine_module_t& _module)
 {
+    bool result = false;
+
     struct stat buf;
     stat(_module.path, &buf);
     int fd = open(_module.path, O_RDONLY);
@@ -396,6 +408,8 @@ void UpdateEngineModule(engine_module_t& _module)
             std::cout << "Library failed to reload : " << dlerror() << std::endl;
         else
             _module.last_load_time = buf.st_mtime;
+
+        result = true;
     }
 
     if (locked) flock(fd, LOCK_UN | LOCK_NB);
@@ -415,5 +429,11 @@ void UpdateEngineModule(engine_module_t& _module)
         _module.shutdown_cb = (void(*)(void*))dlsym(_module.hlib, "EngineShutdown");
         if (!_module.shutdown_cb)
             std::cout << "EngineShutdown not found" << std::endl;
+
+        _module.onreload_cb = (void(*)(void*))dlsym(_module.hlib, "EngineReload");
+        if (!_module.onreload_cb)
+            std::cout << "EngineReload not found" << std::endl;
     }
+
+    return result && _module.hlib;
 }

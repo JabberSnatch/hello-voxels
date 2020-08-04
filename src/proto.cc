@@ -85,13 +85,6 @@ struct state_t
     bool camera_enable_mouse_control = false;
 };
 
-
-// [ ] VDB
-// [ ] VDB -> mesh
-// [ ] mesh render
-// [ ] camera control
-
-
 struct engine_t
 {
     numtk::Mat4_t projection_matrix;
@@ -126,7 +119,7 @@ void EngineInit(engine_t** oEngine)
 {
     *oEngine = new engine_t{
         numtk::mat4_id(),
-        {},
+        engine_t::VDB_t{},
         { 0, 1, 0 },
         {},
         false,
@@ -139,8 +132,13 @@ void EngineShutdown(engine_t* ioEngine)
     delete ioEngine;
 }
 
-void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
+void EngineReload(engine_t* ioEngine)
 {
+    std::cout << "On reload" << std::endl;
+
+    ioEngine->vdb.clear();
+    ioEngine->loaded_chunks.clear();
+
     numtk::Vec3i64_t const chunk = ComputeChunkCoordinates(ioEngine->eye_position);
 
     {
@@ -178,26 +176,29 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
                                         };
 
                                         float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
-                                        return (std::sin(radius) * 5.f) > fvoxel_world[1];
+
+                                        return (std::sin(radius*0.5f) * 6.f) - 4.f > fvoxel_world[1];
                                     }(voxel_world);
 
                                     ioEngine->vdb.set(voxel_world, set_voxel);
+
+#if 0
                                     if (set_voxel)
                                         std::cout << "Set voxel " << voxel_world[0] << " " << voxel_world[1] << " " << voxel_world[2] << std::endl;
+#endif
                                 }
                             }
                         }
 
                         ioEngine->loaded_chunks.insert(chunk_world);
-                        std::cout << "Loaded " << chunk_world[0] << " " << chunk_world[1] << " " << chunk_world[2] << std::endl;
+                        //std::cout << "Loaded " << chunk_world[0] << " " << chunk_world[1] << " " << chunk_world[2] << std::endl;
                     }
 
                 }
             }
         }
-    }
+    } // VOXEL GENERATION
 
-    if (!ioEngine->render_data_clean)
     {
         std::int64_t max_distance = engine_t::kChunkLoadRadius * (1 << engine_t::kLog2ChunkSize);
 
@@ -291,10 +292,12 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
         static oglbase::ShaderSources_t const fshader{ "#version 330 core\n", R"__lstr__(
             layout(location = 0) out vec4 frag_color;
-            in vec3 outgs_voxelIndex;
+            flat in vec3 outgs_voxelIndex;
             void main()
             {
-                frag_color = vec4(1.0, 0.0, 1.0, 1.0) * 0.5;
+                vec3 color = clamp(outgs_voxelIndex / 32.0, -1.0, 1.0);
+                color = color * 0.5 + vec3(0.5);
+                frag_color = vec4(color, 1.0);
             }
         )__lstr__" };
 
@@ -302,44 +305,68 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             "layout(points) in;\n",
             "layout(triangle_strip, max_vertices = 24) out;\n",
             "uniform mat4 iProjMat;\n"
-            "out vec3 outgs_voxelIndex;\n",
-            "const vec4 kBaseExtent = 0.4 * vec4(1.0, 1.0, 1.0, 0.0);\n",
+            "flat out vec3 outgs_voxelIndex;\n",
+            "const vec4 kBaseExtent = 0.5 * vec4(1.0, 1.0, 1.0, 0.0);\n",
             "void main() {\n",
             "vec4 in_position = gl_in[0].gl_Position;",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
+            "outgs_voxelIndex = in_position.xyz;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
             "}"
@@ -354,15 +381,15 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
         std::cout << "Gshader " << log << std::endl;
         ioEngine->shader_program = oglbase::LinkProgram({ vbin, fbin, gbin }, &log);
         std::cout << "Link " << log << std::endl;
+    } // RENDERDATA
+}
 
-        ioEngine->render_data_clean = true;
-    }
-
-    if (ioEngine->render_data_clean)
+void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
+{
     {
         float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];
         ioEngine->projection_matrix = numtk::mat4_mul(
-            numtk::perspective(0.01f, 1000.f, 3.1415926534f*0.5f, aspect_ratio),
+            numtk::perspective(0.01f, 1000.f, 3.1415926534f*0.6f, aspect_ratio),
             MakeCameraMatrix({ 0.f, 10.f, 5.f }, { 0.f, 0.f, 0.f }, { 0.f, 1.f, 0.f })
         );
 
@@ -372,12 +399,14 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
         glDisable(GL_BLEND);
         glDisable(GL_SCISSOR_TEST);
         glDisable(GL_STENCIL_TEST);
-        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_DEPTH_TEST);
         glFrontFace(GL_CCW);
         glEnable(GL_CULL_FACE);
 
         static GLfloat const clear_color[]{ 0.5f, 0.5f, 0.5f, 1.f };
         glClearBufferfv(GL_COLOR, 0, clear_color);
+        static GLfloat const clear_depth = 1.f;
+        glClearBufferfv(GL_DEPTH, 0, &clear_depth);
 
         glUseProgram(ioEngine->shader_program);
         {

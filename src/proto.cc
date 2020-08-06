@@ -8,6 +8,7 @@
  */
 
 #include <array>
+#include <chrono>
 #include <set>
 #include <vector>
 
@@ -19,23 +20,6 @@
 
 #include "GL/glew.h"
 #include "GL/gl.h"
-
-
-numtk::Mat4_t
-MakeCameraMatrix(numtk::Vec3_t const& _p, numtk::Vec3_t const& _t, numtk::Vec3_t const& _u)
-{
-    numtk::Vec3_t const f = numtk::vec3_normalise(numtk::vec3_sub(_p, _t));
-    numtk::Vec3_t const r = numtk::vec3_normalise(numtk::vec3_cross(_u, f));
-    numtk::Vec3_t const u = numtk::vec3_cross(f, r);
-
-    numtk::Vec3_t const p = numtk::vec3_float_mul(_p, -1.f);
-    numtk::Vec3_t const t{ numtk::vec3_dot(p, r), numtk::vec3_dot(p, u), numtk::vec3_dot(p, f) };
-
-    return numtk::mat4_col(numtk::Vec4_t{r[0], u[0], f[0], 0.f},
-                           numtk::Vec4_t{r[1], u[1], f[1], 0.f},
-                           numtk::Vec4_t{r[2], u[2], f[2], 0.f},
-                           numtk::vec3_float_concat(t, 1.f));
-}
 
 
 enum eKey
@@ -87,22 +71,24 @@ struct state_t
 
 struct engine_t
 {
-    numtk::Mat4_t projection_matrix;
+    numtk::Quat_t camera_rotation = numtk::quat_angle_axis(0.f, { 0.f, 1.f, 0.f });
+    numtk::Mat4_t projection_matrix = numtk::mat4_id();
 
     static constexpr unsigned kLog2ChunkSize = 4u;
-    static constexpr int kChunkLoadRadius = 2;
+    static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
+    static constexpr int kChunkLoadRadius = 4;
     using VDB_t = quick_vdb::RootNode<quick_vdb::LeafNode<kLog2ChunkSize>>;
-    VDB_t vdb;
-    numtk::Vec3i64_t eye_position;
+    VDB_t vdb = {};
+    numtk::Vec3i64_t eye_position = { 0, 1, 0 };
 
-    std::set<numtk::Vec3i64_t> loaded_chunks;
+    std::set<numtk::Vec3i64_t> loaded_chunks{};
 
-    bool render_data_clean;
-    std::vector<numtk::Vec3_t> points;
+    bool render_data_clean = false;
+    std::vector<numtk::Vec3_t> points{};
 
-    oglbase::BufferPtr vbo;
-    oglbase::VAOPtr vao;
-    oglbase::ProgramPtr shader_program;
+    oglbase::BufferPtr vbo{};
+    oglbase::VAOPtr vao{};
+    oglbase::ProgramPtr shader_program{};
 };
 
 numtk::Vec3i64_t ComputeChunkCoordinates(numtk::Vec3i64_t const& _p)
@@ -117,14 +103,7 @@ extern "C"
 
 void EngineInit(engine_t** oEngine)
 {
-    *oEngine = new engine_t{
-        numtk::mat4_id(),
-        engine_t::VDB_t{},
-        { 0, 1, 0 },
-        {},
-        false,
-        {}
-    };
+    *oEngine = new engine_t{};
 }
 
 void EngineShutdown(engine_t* ioEngine)
@@ -142,6 +121,9 @@ void EngineReload(engine_t* ioEngine)
     numtk::Vec3i64_t const chunk = ComputeChunkCoordinates(ioEngine->eye_position);
 
     {
+        using StdClock = std::chrono::high_resolution_clock;
+        auto start = StdClock::now();
+
         numtk::Vec3i64_t load_bounds_min =
             numtk::vec3i64_add(chunk, { -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius });
 
@@ -177,7 +159,7 @@ void EngineReload(engine_t* ioEngine)
 
                                         float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
 
-                                        return (std::sin(radius*0.5f) * 6.f) - 4.f > fvoxel_world[1];
+                                        return (std::sin(radius*0.5f) * 3.f * (radius*0.01f+1.f)) - 4.f > fvoxel_world[1];
                                     }(voxel_world);
 
                                     ioEngine->vdb.set(voxel_world, set_voxel);
@@ -197,15 +179,36 @@ void EngineReload(engine_t* ioEngine)
                 }
             }
         }
+
+        auto end = StdClock::now();
+        float load_time =
+            static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
+        std::cout << "Voxel generation " << load_time/1000.f << " s" << std::endl;
     } // VOXEL GENERATION
 
     {
-        std::int64_t max_distance = engine_t::kChunkLoadRadius * (1 << engine_t::kLog2ChunkSize);
+        using StdClock = std::chrono::high_resolution_clock;
+        auto start = StdClock::now();
 
         numtk::Vec3i64_t camera_voxel = ioEngine->eye_position;
         std::vector<numtk::Vec3i64_t> backlog{ camera_voxel };
+        {
+            unsigned render_distance = engine_t::kChunkSize * (engine_t::kChunkLoadRadius*2+1);
+            std::int64_t reserve_size = render_distance * render_distance * render_distance;
+            std::cout << "Preallocating " << reserve_size * 8u * 3u << " bytes" << std::endl;
+            backlog.reserve(reserve_size);
+        }
+
         std::set<numtk::Vec3i64_t> processed{ camera_voxel };
+
         std::vector<numtk::Vec3_t> isosurface{};
+        {
+            unsigned render_distance = engine_t::kChunkSize * (engine_t::kChunkLoadRadius*2+1);
+            std::int64_t reserve_size = render_distance * render_distance  * 2u;
+            std::cout << "Preallocating " << reserve_size * 4u * 3u << " bytes" << std::endl;
+            isosurface.reserve(reserve_size);
+        }
+
         while (!backlog.empty())
         {
             numtk::Vec3i64_t voxel = backlog.back();
@@ -253,18 +256,15 @@ void EngineReload(engine_t* ioEngine)
             }
         }
 
-#if 0
-        std::cout << "Isosurface" << std::endl;
-        for (numtk::Vec3i64_t const& voxel : isosurface)
-            std::cout << voxel[0] << " " << voxel[1] << " " << voxel[2] << std::endl;
-#endif
-
         ioEngine->points = std::move(isosurface);
 
-        // =====================================================================
-        // OPENGL
-        // =====================================================================
+        auto end = StdClock::now();
+        float load_time =
+            static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
+        std::cout << "Flood fill " << load_time/1000.f << " s" << std::endl;
+    }
 
+    {
         void* data = ioEngine->points.data();
         int point_count = ioEngine->points.size();
 
@@ -306,7 +306,7 @@ void EngineReload(engine_t* ioEngine)
             "layout(triangle_strip, max_vertices = 24) out;\n",
             "uniform mat4 iProjMat;\n"
             "flat out vec3 outgs_voxelIndex;\n",
-            "const vec4 kBaseExtent = 0.5 * vec4(1.0, 1.0, 1.0, 0.0);\n",
+            "const vec4 kBaseExtent = 0.4 * vec4(1.0, 1.0, 1.0, 0.0);\n",
             "void main() {\n",
             "vec4 in_position = gl_in[0].gl_Position;",
 
@@ -387,11 +387,25 @@ void EngineReload(engine_t* ioEngine)
 void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 {
     {
-        float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];
-        ioEngine->projection_matrix = numtk::mat4_mul(
-            numtk::perspective(0.01f, 1000.f, 3.1415926534f*0.6f, aspect_ratio),
-            MakeCameraMatrix({ 0.f, 10.f, 5.f }, { 0.f, 0.f, 0.f }, { 0.f, 1.f, 0.f })
-        );
+        {
+            ioEngine->camera_rotation = numtk::quat_angle_axis(0.5f, { 0.f, 1.f, 0.f });
+
+            numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_rotation);
+            numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, 1.f, 0.f});
+            numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
+
+            numtk::Mat4_t viewmat = numtk::mat4_view(
+                numtk::vec3_from_vec4(camforward),
+                numtk::vec3_from_vec4(camup),
+                { 0.f, 15.f, 5.f }
+            );
+
+            float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];
+            ioEngine->projection_matrix = numtk::mat4_mul(
+                numtk::mat4_perspective(0.01f, 1000.f, 3.1415926534f*0.6f, aspect_ratio),
+                viewmat
+            );
+        }
 
         // draw call
         glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);

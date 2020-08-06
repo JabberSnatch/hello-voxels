@@ -25,18 +25,6 @@ using Mat4_t = std::array<float, 16>;
 using Quat_t = std::array<float, 4>;
 using dQuat_t = std::array<float, 8>;
 
-inline Mat4_t perspective(float n, float f, float alpha, float how)
-{
-    const float inv_tan_half_alpha = 1.f / std::tan(alpha * .5f);
-    const float inv_fmn = 1.f / (f-n);
-    return Mat4_t{
-        inv_tan_half_alpha, 0.f, 0.f, 0.f,
-        0.f, (1.f/how)*inv_tan_half_alpha, 0.f, 0.f,
-        0.f, 0.f, (-(f+n))*inv_fmn, -1.f,
-        0.f, 0.f, -2.f*f*n*inv_fmn, 0.f
-    };
-}
-
 inline Vec2i_t
 vec2i_sub(Vec2i_t const& _lhs, Vec2i_t const&_rhs)
 {
@@ -134,7 +122,7 @@ vec3_norm(Vec3_t const& _op)
 inline Vec3_t
 vec3_normalise(Vec3_t const& _op)
 {
-    return vec3_float_mul(_op, 1.f/sqrt(vec3_dot(_op, _op)));
+    return vec3_float_mul(_op, 1.f/std::sqrt(vec3_dot(_op, _op)));
 }
 
 inline Vec4_t
@@ -183,17 +171,6 @@ mat4_col(Vec4_t const& _c0, Vec4_t const& _c1, Vec4_t const& _c2, Vec4_t const& 
         };
 }
 
-inline Vec4_t
-mat4_vec4_mul(Mat4_t const& _lhs, Vec4_t const& _rhs)
-{
-    return Vec4_t{
-        _lhs[0]*_rhs[0] + _lhs[4]*_rhs[1] + _lhs[8]*_rhs[2] + _lhs[12]*_rhs[3],
-        _lhs[1]*_rhs[0] + _lhs[5]*_rhs[1] + _lhs[9]*_rhs[2] + _lhs[13]*_rhs[3],
-        _lhs[2]*_rhs[0] + _lhs[6]*_rhs[1] + _lhs[10]*_rhs[2] + _lhs[14]*_rhs[3],
-        _lhs[3]*_rhs[0] + _lhs[7]*_rhs[1] + _lhs[11]*_rhs[2] + _lhs[15]*_rhs[3]
-    };
-}
-
 inline Mat4_t
 mat4_transpose(Mat4_t const& _op)
 {
@@ -202,6 +179,17 @@ mat4_transpose(Mat4_t const& _op)
         _op[1], _op[5], _op[9], _op[13],
         _op[2], _op[6], _op[10], _op[14],
         _op[3], _op[7], _op[11], _op[15]
+    };
+}
+
+inline Vec4_t
+mat4_vec4_mul(Mat4_t const& _lhs, Vec4_t const& _rhs)
+{
+    return Vec4_t{
+        _lhs[0]*_rhs[0] + _lhs[4]*_rhs[1] + _lhs[8]*_rhs[2] + _lhs[12]*_rhs[3],
+        _lhs[1]*_rhs[0] + _lhs[5]*_rhs[1] + _lhs[9]*_rhs[2] + _lhs[13]*_rhs[3],
+        _lhs[2]*_rhs[0] + _lhs[6]*_rhs[1] + _lhs[10]*_rhs[2] + _lhs[14]*_rhs[3],
+        _lhs[3]*_rhs[0] + _lhs[7]*_rhs[1] + _lhs[11]*_rhs[2] + _lhs[15]*_rhs[3]
     };
 }
 
@@ -277,6 +265,40 @@ mat4_from_quat(Quat_t const& _op)
     };
 }
 
+inline Mat4_t
+mat4_perspective(float n, float f, float alpha, float how)
+{
+    const float inv_tan_half_alpha = 1.f / std::tan(alpha * .5f);
+    const float inv_fmn = 1.f / (f-n);
+    return Mat4_t{
+        inv_tan_half_alpha, 0.f, 0.f, 0.f,
+        0.f, (1.f/how)*inv_tan_half_alpha, 0.f, 0.f,
+        0.f, 0.f, (-(f+n))*inv_fmn, -1.f,
+        0.f, 0.f, -2.f*f*n*inv_fmn, 0.f
+    };
+}
+
+inline Mat4_t
+mat4_view(Vec3_t const& _f, Vec3_t const& _u, Vec3_t const& _p)
+{
+    numtk::Vec3_t const l = numtk::vec3_normalise(numtk::vec3_cross(_u, _f));
+    numtk::Vec3_t const p = numtk::vec3_float_mul(_p, -1.f);
+    numtk::Vec3_t const t{ numtk::vec3_dot(p, l), numtk::vec3_dot(p, _u), numtk::vec3_dot(p, _f) };
+
+    return numtk::mat4_col(numtk::Vec4_t{l[0], _u[0], _f[0], 0.f},
+                           numtk::Vec4_t{l[1], _u[1], _f[1], 0.f},
+                           numtk::Vec4_t{l[2], _u[2], _f[2], 0.f},
+                           numtk::vec3_float_concat(t, 1.f));
+}
+
+inline Quat_t
+quat_angle_axis(float _angle, numtk::Vec3_t const &_axis)
+{
+    float const half_angle = _angle / 2.f;
+    float const sin_ha = std::sin(half_angle);
+    return Quat_t{ std::cos(half_angle), _axis[0] * sin_ha, _axis[1] * sin_ha, _axis[2] * sin_ha };
+}
+
 inline Quat_t
 quat_add(Quat_t const& _lhs, Quat_t const& _rhs)
 {
@@ -333,12 +355,16 @@ quat_slerp(Quat_t const& _lhs, Quat_t const& _rhs, float _t)
 inline dQuat_t
 dquat(float _angle, Vec3_t _axis, Vec3_t _t)
 {
-    float const half_angle = _angle / 2.f;
-    float const sin_ha = std::sin(half_angle);
-    Quat_t const r{ std::cos(half_angle), _axis[0] * sin_ha, _axis[1] * sin_ha, _axis[2] * sin_ha };
+    Quat_t const r = quat_angle_axis(_angle, _axis);
     Quat_t const t{ 0, _t[0], _t[1], _t[2] };
     Quat_t const dual = quat_float_mul(quat_mul(t, r), .5f);
     return dQuat_t{ r[0], r[1], r[2], r[3], dual[0], dual[1], dual[2], dual[3] };
+}
+
+inline Quat_t const&
+dquat_rotation(dQuat_t const& _op)
+{
+    return *(Quat_t const*)&_op;
 }
 
 } // namespace numtk

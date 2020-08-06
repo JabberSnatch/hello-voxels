@@ -31,6 +31,9 @@
 #include <GL/gl.h>
 #include <GL/glx.h>
 
+#include "input.h"
+#include "numtk.h"
+
 using proc_glXCreateContextAttribsARB =
     GLXContext(*)(Display*, GLXFBConfig, GLXContext, Bool, int const*);
 using proc_glXSwapIntervalEXT =
@@ -253,10 +256,10 @@ int main(int __argc, char* __argv[])
     engine_main.init_cb(&engine);
     engine_main.onreload_cb(engine);
 
-    struct input_t
-    {
-        std::array<int, 2> screen_size{ 0, 0 };
-    } input{};
+    input_t input[2];
+    input[0] = input_t{};
+    input[0].screen_size = { boot_width, boot_height };
+    input[1] = input[0];
 
     glXMakeCurrent(display, 0, 0);
 
@@ -264,6 +267,8 @@ int main(int __argc, char* __argv[])
     int i = 0;
     float frame_time = 0.f;
     float last_frame_time = 0.f;
+    bool hide_cursor = false;
+
     for(bool run = true; run;)
     {
         using StdClock = std::chrono::high_resolution_clock;
@@ -278,13 +283,14 @@ int main(int __argc, char* __argv[])
             case ConfigureNotify:
             {
                 XConfigureEvent const& xcevent = xevent.xconfigure;
-                input.screen_size = std::array<int, 2>{ xcevent.width, xcevent.height };
+                input[0].screen_size = std::array<int, 2>{ xcevent.width, xcevent.height };
             } break;
 
             case ButtonPress:
             case ButtonRelease:
             {
                 //XButtonEvent const& xbevent = xevent.xbutton;
+                input[0].mouse_down = (xevent.type == ButtonPress);
             } break;
 
             case KeyPress:
@@ -304,11 +310,9 @@ int main(int __argc, char* __argv[])
 
                     if (ks == XK_Escape && xevent.type == KeyPress)
                     {
-                        static bool hide_cursor = false;
                         if (!hide_cursor)
                         {
                             XFixesHideCursor(display, window);
-                            XWarpPointer(display, None, window, 0, 0, 0, 0, 10, 30);
                             std::cout << "cursor hidden" << std::endl;
                         }
                         else
@@ -317,20 +321,16 @@ int main(int __argc, char* __argv[])
                             std::cout << "cursor shown" << std::endl;
                         }
                         hide_cursor = !hide_cursor;
+                        //layer_mediator->state_.camera_enable_mouse_control = hide_cursor;
                     }
 
-#if 0
-                    if (((unsigned)ks & 0xff00) == 0xff00)
-                        layer_mediator->KeyDown((std::uint32_t)ks, km, (xevent.type == KeyPress));
-                    else
-                        layer_mediator->KeyDown((std::uint32_t)kc, km, (xevent.type == KeyPress));
-#endif
                 }
             } break;
 
             case MotionNotify:
             {
                 XMotionEvent const& xmevent = xevent.xmotion;
+                input[0].mouse_pos = { xmevent.x, input[0].screen_size[1] - xmevent.y };
             } break;
 
             case DestroyNotify:
@@ -355,7 +355,28 @@ int main(int __argc, char* __argv[])
             engine_main.onreload_cb(engine);
 
         if (engine_main.hlib)
-            engine_main.run_frame_cb(engine, &input);
+        {
+            input[0].mouse_delta = numtk::vec2i_sub(input[0].mouse_pos, input[1].mouse_pos);
+
+            if (hide_cursor)
+            {
+                numtk::Vec2i_t warp_pos = numtk::vec2i_int_div(input[0].screen_size, 2);
+                if (!numtk::vec2i_equal(input[0].mouse_pos, warp_pos))
+                {
+                    XWarpPointer(display, None, window, 0, 0, 0, 0,
+                                 warp_pos[0],
+                                 input[0].screen_size[1] - warp_pos[1]);
+                }
+                input[0].mouse_pos = warp_pos;
+            }
+            else
+            {
+                input[0].mouse_delta = numtk::Vec2i_t{ 0, 0 };
+            }
+
+            engine_main.run_frame_cb(engine, input);
+        }
+        input[1] = input[0];
 
         glXSwapBuffers(display, window);
 

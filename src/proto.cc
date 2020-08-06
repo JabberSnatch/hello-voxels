@@ -21,57 +21,11 @@
 #include "GL/glew.h"
 #include "GL/gl.h"
 
-
-enum eKey
-{
-    kSpecialBegin = 1u,
-    kTab = kSpecialBegin,
-    kLeft,
-    kRight,
-    kUp,
-    kDown,
-    kPageUp,
-    kPageDown,
-    kHome,
-    kEnd,
-    kInsert,
-    kDelete,
-    kBackspace,
-    kEnter,
-    kEscape,
-    kSpecialEnd,
-
-    kASCIIBegin = 0x20,
-    kASCIIEnd = 0x7f,
-};
-
-enum fKeyMod
-{
-    kCtrl = 1u << 0,
-    kShift = 1u << 1,
-    kAlt = 1u << 2
-};
-
-struct input_t
-{
-    numtk::Vec2i_t screen_size{ 0, 0 };
-    bool mouse_down{ false };
-    numtk::Vec2i_t mouse_pos{ -1, -1 };
-    numtk::Vec2i_t mouse_delta{ 0, 0 };
-    std::array<bool, 256> key_down;
-    std::uint32_t mod_down;
-    std::array<eKey, 256> key_map;
-};
-
-struct state_t
-{
-    numtk::dQuat_t camera_transform{ 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
-    bool camera_enable_mouse_control = false;
-};
+#include "input.h"
 
 struct engine_t
 {
-    numtk::Quat_t camera_rotation = numtk::quat_angle_axis(0.f, { 0.f, 1.f, 0.f });
+    numtk::Vec3_t camera_euler{ 0.f, 0.f, 0.f };
     numtk::Mat4_t projection_matrix = numtk::mat4_id();
 
     static constexpr unsigned kLog2ChunkSize = 4u;
@@ -388,16 +342,25 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 {
     {
         {
-            ioEngine->camera_rotation = numtk::quat_angle_axis(0.5f, { 0.f, 1.f, 0.f });
+            {
+                static constexpr float kAngleSpeed = 0.5f;
+                numtk::Vec3_t rotation_delta = numtk::vec3_float_mul(numtk::Vec3_t{
+                    (float)iInput->mouse_delta[1],
+                    -(float)iInput->mouse_delta[0],
+                    0.f }
+                , kAngleSpeed * (3.1415926536f / 180.f));
 
-            numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_rotation);
+                ioEngine->camera_euler = numtk::vec3_add(ioEngine->camera_euler, rotation_delta);
+            }
+
+            numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
             numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, 1.f, 0.f});
             numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
 
             numtk::Mat4_t viewmat = numtk::mat4_view(
                 numtk::vec3_from_vec4(camforward),
                 numtk::vec3_from_vec4(camup),
-                { 0.f, 15.f, 5.f }
+                { 0.f, 0.f, 0.f }
             );
 
             float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];

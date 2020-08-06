@@ -245,19 +245,19 @@ mat4_rot(Vec3_t const& _eulerDeg)
 inline Mat4_t
 mat4_from_quat(Quat_t const& _op)
 {
-    return Mat4_t{
+     return Mat4_t{
         1.f - 2.f*(_op[2]*_op[2] + _op[3]*_op[3]),
         2.f*(_op[1]*_op[2] + _op[3]*_op[0]),
-        2.f*(_op[1]*_op[2] + _op[2]*_op[0]),
+        2.f*(_op[1]*_op[3] - _op[2]*_op[0]),
         0.f,
 
-        2.f*(_op[1]*_op[2] + _op[3]*_op[0]),
+        2.f*(_op[1]*_op[2] - _op[3]*_op[0]),
         1.f - 2.f*(_op[1]*_op[1] + _op[3]*_op[3]),
         2.f*(_op[2]*_op[3] + _op[1]*_op[0]),
         0.f,
 
         2.f*(_op[1]*_op[3] + _op[2]*_op[0]),
-        2.f*(_op[2]*_op[3] + _op[1]*_op[0]),
+        2.f*(_op[2]*_op[3] - _op[1]*_op[0]),
         1.f - 2.f*(_op[1]*_op[1] + _op[2]*_op[2]),
         0.f,
 
@@ -313,12 +313,25 @@ quat_mul(Quat_t const& _lhs, Quat_t const& _rhs)
     // j −k −1 i
     // k j −i −1
 
+#if 0
+    Vec3_t const& v0 = *(Vec3_t const*)&(_lhs[1]);
+    Vec3_t const& v1 = *(Vec3_t const*)&(_rhs[1]);
+
+    Vec3_t v = vec3_add(vec3_float_mul(v1, _lhs[0]),
+                        vec3_add(vec3_float_mul(v0, _rhs[0]),
+                                 vec3_cross(v0, v1)));
+    return Quat_t{
+        _lhs[0]*_rhs[0] - vec3_dot(*(Vec3_t const*)&(_lhs[1]), *(Vec3_t const*)&(_rhs[1])),
+        v[0], v[1], v[2]
+    };
+#else
     return Quat_t{
         _lhs[0]*_rhs[0] - _lhs[1]*_rhs[1] - _lhs[2]*_rhs[2] - _lhs[3]*_rhs[3],
         _lhs[0]*_rhs[1] + _lhs[1]*_rhs[0] + _lhs[2]*_rhs[3] - _lhs[3]*_rhs[2],
         _lhs[0]*_rhs[2] - _lhs[1]*_rhs[3] + _lhs[2]*_rhs[0] + _lhs[3]*_rhs[1],
         _lhs[0]*_rhs[3] + _lhs[1]*_rhs[2] - _lhs[2]*_rhs[1] + _lhs[3]*_rhs[0]
     };
+#endif
 }
 
 inline Quat_t
@@ -328,7 +341,7 @@ quat_float_mul(Quat_t const& _lhs, float _rhs)
 }
 
 inline Quat_t
-quat_normalize(Quat_t const& _op)
+quat_normalise(Quat_t const& _op)
 {
     return quat_float_mul(_op, 1.f / std::sqrt(vec4_dot((Vec4_t)_op, (Vec4_t)_op)));
 }
@@ -337,6 +350,29 @@ inline Quat_t
 quat_conjugate(Quat_t const& _op)
 {
     return Quat_t{ _op[0], -_op[1], -_op[2], -_op[3] };
+}
+
+inline Quat_t
+quat_from_euler(numtk::Vec3_t const& _e)
+{
+#if 1
+    Quat_t x = quat_angle_axis(_e[0], {1.f, 0.f, 0.f});
+    Quat_t y = quat_angle_axis(_e[1], {0.f, 1.f, 0.f});
+    Quat_t z = quat_angle_axis(_e[2], {0.f, 0.f, 1.f});
+    return quat_mul(y, quat_mul(x, z));
+
+#else
+    numtk::Vec3_t h = numtk::vec3_float_mul(_e, .5f);
+    numtk::Vec3_t s{ std::sin(h[0]), std::sin(h[1]), std::sin(h[2]) };
+    numtk::Vec3_t c{ std::cos(h[0]), std::cos(h[1]), std::cos(h[2]) };
+
+    return Quat_t{
+        c[2]*c[0]*c[1] + s[2]*s[0]*s[1],
+        s[2]*c[0]*c[1] - c[2]*s[0]*s[1],
+        c[2]*s[0]*c[1] + s[2]*c[0]*s[1],
+        c[2]*c[0]*s[1] - s[2]*s[0]*c[1]
+    };
+#endif
 }
 
 inline Quat_t

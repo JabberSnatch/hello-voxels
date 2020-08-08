@@ -28,10 +28,17 @@ struct engine_t
     numtk::Vec3_t camera_euler{ 0.f, 0.f, 0.f };
     numtk::Mat4_t projection_matrix = numtk::mat4_id();
 
+    numtk::Vec3_t player_position{ 0.f, 15.f, 0.f };
+    numtk::Vec3_t player_velocity{ 0.f, -5.f, 0.f };
+    bool player_on_ground = false;
+    numtk::Vec3i64_t last_voxel{};
+
     static constexpr unsigned kLog2ChunkSize = 4u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
     static constexpr int kChunkLoadRadius = 4;
-    using VDB_t = quick_vdb::RootNode<quick_vdb::LeafNode<kLog2ChunkSize>>;
+    static constexpr float kVoxelScale = 1.f;
+    using VDB_t =
+        quick_vdb::RootNode<quick_vdb::BranchNode<quick_vdb::LeafNode<kLog2ChunkSize / 2>, kLog2ChunkSize / 2>>;
     VDB_t vdb = {};
     numtk::Vec3i64_t eye_position = { 0, 1, 0 };
 
@@ -105,6 +112,8 @@ void EngineReload(engine_t* ioEngine)
 
                                     bool set_voxel = [](numtk::Vec3i64_t const& voxel_world)
                                     {
+                                        //return (voxel_world[1] < 0);
+
                                         numtk::Vec3_t fvoxel_world{
                                             (float)voxel_world[0],
                                             (float)voxel_world[1],
@@ -113,7 +122,7 @@ void EngineReload(engine_t* ioEngine)
 
                                         float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
 
-                                        return (std::sin(radius*0.5f) * 3.f * (radius*0.01f+1.f)) - 4.f > fvoxel_world[1];
+                                        return (std::cos(radius*0.5f) * 3.f * (radius*0.01f+1.f)) - 4.f > fvoxel_world[1];
                                     }(voxel_world);
 
                                     ioEngine->vdb.set(voxel_world, set_voxel);
@@ -260,7 +269,7 @@ void EngineReload(engine_t* ioEngine)
             "layout(triangle_strip, max_vertices = 24) out;\n",
             "uniform mat4 iProjMat;\n"
             "flat out vec3 outgs_voxelIndex;\n",
-            "const vec4 kBaseExtent = 0.4 * vec4(1.0, 1.0, 1.0, 0.0);\n",
+            "const vec4 kBaseExtent = 0.5 * vec4(1.0, 1.0, 1.0, 0.0);\n",
             "void main() {\n",
             "vec4 in_position = gl_in[0].gl_Position;",
 
@@ -340,36 +349,161 @@ void EngineReload(engine_t* ioEngine)
 
 void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 {
+    static constexpr float kFrameTime = 0.016f;
+
+#if 0
+    std::cout << iInput->key_down[' '] << " "
+              << ((iInput->mod_down & fKeyMod::kShift) != 0) << std::endl
+              << iInput->key_down['w'] << " "
+              << iInput->key_down['a'] << " "
+              << iInput->key_down['s'] << " "
+              << iInput->key_down['d'] << std::endl;
+#endif
+
+    {
+
+        if (iInput->key_down['q'])
+        {
+            ioEngine->player_position = { 0.f, 15.f, 0.f };
+            ioEngine->player_velocity = { 0.f, -5.f, 0.f };
+            ioEngine->player_on_ground = false;
+        }
+
+        {
+            static constexpr float kAngleSpeed = 0.5f;
+            numtk::Vec3_t rotation_delta = numtk::vec3_float_mul(numtk::Vec3_t{
+                (float)iInput->mouse_delta[1],
+                -(float)iInput->mouse_delta[0],
+                0.f }
+            , kAngleSpeed * (3.1415926536f / 180.f));
+
+            ioEngine->camera_euler = numtk::vec3_add(ioEngine->camera_euler, rotation_delta);
+        }
+    }
+
     {
         {
+            numtk::Vec3_t d{ 0.f, 0.f, 0.f };
+
+            if (iInput->key_down['w'])
+                d = numtk::vec3_add(d, { 0.f, 0.f, -1.f });
+            if (iInput->key_down['s'])
+                d = numtk::vec3_add(d, { 0.f, 0.f, 1.f });
+            if (iInput->key_down['a'])
+                d = numtk::vec3_add(d, { -1.f, 0.f, 0.f });
+            if (iInput->key_down['d'])
+                d = numtk::vec3_add(d, { 1.f, 0.f, 0.f });
+
+            if (numtk::vec3_dot(d, d) > 0.f)
             {
-                static constexpr float kAngleSpeed = 0.5f;
-                numtk::Vec3_t rotation_delta = numtk::vec3_float_mul(numtk::Vec3_t{
-                    (float)iInput->mouse_delta[1],
-                    -(float)iInput->mouse_delta[0],
-                    0.f }
-                , kAngleSpeed * (3.1415926536f / 180.f));
+                d = numtk::vec3_normalise(d);
 
-                ioEngine->camera_euler = numtk::vec3_add(ioEngine->camera_euler, rotation_delta);
+                static constexpr float kLineSpeed = 5.f;
+                numtk::Vec3_t dp = d;
+                numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
+                numtk::Vec3_t wsdp = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::vec3_float_concat(dp, 0.f)));
+                wsdp[1] = 0.f;
+                wsdp = numtk::vec3_normalise(wsdp);
+                wsdp = numtk::vec3_float_mul(wsdp, 5.f * kFrameTime);
+
+                ioEngine->player_position = numtk::vec3_add(ioEngine->player_position, wsdp);
             }
+        }
 
-            numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
-            numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, 1.f, 0.f});
-            numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
+        if (!ioEngine->player_on_ground)
+        {
+            static const numtk::Vec3_t g = { 0.f, -9.8f, 0.f };
 
-            numtk::Mat4_t viewmat = numtk::mat4_view(
-                numtk::vec3_from_vec4(camforward),
-                numtk::vec3_from_vec4(camup),
-                { 0.f, 0.f, 0.f }
+            ioEngine->player_velocity = numtk::vec3_add(
+                numtk::vec3_float_mul(g, kFrameTime),
+                ioEngine->player_velocity
             );
 
-            float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];
-            ioEngine->projection_matrix = numtk::mat4_mul(
-                numtk::mat4_perspective(0.01f, 1000.f, 3.1415926534f*0.6f, aspect_ratio),
-                viewmat
+            ioEngine->player_position = numtk::vec3_add(
+                numtk::vec3_float_mul(ioEngine->player_velocity, kFrameTime),
+                ioEngine->player_position
             );
         }
 
+        {
+            numtk::Vec3_t pp = ioEngine->player_position;//numtk::vec3_add({ 0.5f, 0.f, 0.5f },  ioEngine->player_position);
+
+            quick_vdb::Position_t vp{
+                (std::int64_t)std::floor(pp[0]),
+                (std::int64_t)std::floor(pp[1]),
+                (std::int64_t)std::floor(pp[2])
+            };
+
+            if (ioEngine->last_voxel != vp)
+            {
+                std::cout << "Changed voxel " << std::endl;
+                std::cout << ioEngine->last_voxel[0] << " " << ioEngine->last_voxel[1] << " " << ioEngine->last_voxel[2] << std::endl;
+                std::cout << "vp " << vp[0] << " " << vp[1] << " " << vp[2] << std::endl;
+
+                if (ioEngine->vdb.get(vp))
+                {
+                    std::cout << "player underground" << std::endl;
+                    ioEngine->player_on_ground = true;
+
+                    static constexpr unsigned kMaxIterationCount = 2048u;
+                    for (unsigned it = 0u;
+                         ioEngine->vdb.get(vp) && it < kMaxIterationCount; ++it)
+                    {
+                        ++vp[1];
+                    }
+
+                    ioEngine->player_position = numtk::Vec3_t{ pp[0], (float)vp[1], pp[2] };
+                    ioEngine->player_velocity = numtk::Vec3_t{ 0.f, 0.f, 0.f };
+                }
+                else
+                {
+                    numtk::Vec3i64_t t0 = vp;
+                    --t0[1];
+                    if (!ioEngine->vdb.get(t0))
+                    {
+                        std::cout << "player falling" << std::endl;
+                        ioEngine->player_on_ground = false;
+                    }
+                }
+            }
+            else
+            {
+                //ioEngine->last_voxel = vp;
+            }
+        }
+
+        {
+            numtk::Vec3_t pp = ioEngine->player_position;//numtk::vec3_add({ 0.5f, 0.f, 0.5f },  ioEngine->player_position);
+            numtk::Vec3i64_t voxel_position{
+                (std::int64_t)std::floor(pp[0]),
+                (std::int64_t)std::floor(pp[1]),
+                (std::int64_t)std::floor(pp[2])
+            };
+
+            ioEngine->last_voxel = voxel_position;
+        }
+    }
+
+    {
+        numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
+        numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, 1.f, 0.f});
+        numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
+        numtk::Vec3_t campos = numtk::vec3_add(ioEngine->player_position, { 0.f, 1.7f, 0.f });
+
+        numtk::Mat4_t viewmat = numtk::mat4_view(
+            numtk::vec3_from_vec4(camforward),
+            numtk::vec3_from_vec4(camup),
+            campos
+        );
+
+        float aspect_ratio = (float)iInput->screen_size[1] / (float)iInput->screen_size[0];
+        ioEngine->projection_matrix = numtk::mat4_mul(
+            numtk::mat4_perspective(0.01f, 1000.f, 3.1415926534f*0.6f, aspect_ratio),
+            viewmat
+        );
+    }
+
+    {
         // draw call
         glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);
         glDisable(GL_MULTISAMPLE);

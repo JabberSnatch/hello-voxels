@@ -248,6 +248,9 @@ int main(int __argc, char* __argv[])
 
     glXMakeCurrent(display, 0, 0);
 
+    // ===============================================================
+    // ENGINE INIT
+    // ===============================================================
     glXMakeCurrent(display, window, glx_context);
 
     UpdateEngineModule(engine_main);
@@ -255,6 +258,22 @@ int main(int __argc, char* __argv[])
     void* engine = nullptr;
     engine_main.init_cb(&engine);
     engine_main.onreload_cb(engine);
+
+    std::array<eKey, 256> key_map{};
+    key_map[(std::uint8_t)(XK_Tab & 0xff)] = eKey::kTab;
+    key_map[(std::uint8_t)(XK_Left & 0xff)] = eKey::kLeft;
+    key_map[(std::uint8_t)(XK_Right & 0xff)] = eKey::kRight;
+    key_map[(std::uint8_t)(XK_Up & 0xff)] = eKey::kUp;
+    key_map[(std::uint8_t)(XK_Down & 0xff)] = eKey::kDown;
+    key_map[(std::uint8_t)(XK_Page_Up & 0xff)] = eKey::kPageUp;
+    key_map[(std::uint8_t)(XK_Page_Down & 0xff)] = eKey::kPageDown;
+    key_map[(std::uint8_t)(XK_Home & 0xff)] = eKey::kHome;
+    key_map[(std::uint8_t)(XK_End & 0xff)] = eKey::kEnd;
+    key_map[(std::uint8_t)(XK_Insert & 0xff)] = eKey::kInsert;
+    key_map[(std::uint8_t)(XK_Delete & 0xff)] = eKey::kDelete;
+    key_map[(std::uint8_t)(XK_BackSpace & 0xff)] = eKey::kBackspace;
+    key_map[(std::uint8_t)(XK_Return & 0xff)] = eKey::kEnter;
+    key_map[(std::uint8_t)(XK_Escape & 0xff)] = eKey::kEscape;
 
     input_t input[2];
     input[0] = input_t{};
@@ -324,6 +343,18 @@ int main(int __argc, char* __argv[])
                         //layer_mediator->state_.camera_enable_mouse_control = hide_cursor;
                     }
 
+                    std::uint32_t km = 0u;
+                    km |= (mod_mask & ControlMask) ? fKeyMod::kCtrl : 0u;
+                    km |= (mod_mask & ShiftMask) ? fKeyMod::kShift : 0u;
+                    km |= (mod_mask & Mod1Mask) ? fKeyMod::kAlt : 0u;
+                    input[0].mod_down = km;
+
+                    std::uint32_t key = (((unsigned)ks & 0xff00) == 0xff00)
+                        ? (std::uint32_t)ks
+                        : (std::uint32_t)kc;
+                    if (key < eKey::kASCIIBegin || key >= eKey::kASCIIEnd)
+                        key = key_map[key & 0xff];
+                    input[0].key_down[key] = (xevent.type == KeyPress);
                 }
             } break;
 

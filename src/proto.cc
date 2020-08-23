@@ -29,6 +29,7 @@
 struct engine_t
 {
     numtk::Vec3_t camera_euler{ 0.f, 0.f, 0.f };
+    numtk::Quat_t camera_current{};
     numtk::Mat4_t projection_matrix = numtk::mat4_id();
 
     numtk::Vec3_t player_position{ 0.f, 15.f, 0.f };
@@ -44,7 +45,7 @@ struct engine_t
     using VDB_t =
         quick_vdb::RootNode<quick_vdb::BranchNode<quick_vdb::LeafNode<kLog2ChunkSize / 2>, kLog2ChunkSize / 2>>;
     VDB_t vdb = {};
-    numtk::Vec3i64_t eye_position = { 0, 3, 0 };
+    numtk::Vec3i64_t eye_position = { 0, 32, 0 };
 
     std::set<numtk::Vec3i64_t> loaded_chunks{};
 
@@ -122,6 +123,8 @@ void RefreshRenderBuffer(engine_t* ioEngine)
             isosurface.reserve(reserve_size);
         }
 
+        float dVoxelLookupTime = 0.f;
+
         while (!backlog.empty())
         {
             numtk::Vec3i64_t voxel = backlog.back();
@@ -129,7 +132,21 @@ void RefreshRenderBuffer(engine_t* ioEngine)
 
             //std::cout << "Voxel " << voxel[0] << " " << voxel[1] << " " << voxel[2];
 
-            if (ioEngine->vdb.get(voxel))
+            bool voxel_set = false;
+
+            {
+                using StdClock = std::chrono::high_resolution_clock;
+                auto start = StdClock::now();
+
+                voxel_set = ioEngine->vdb.get(voxel);
+
+                auto end = StdClock::now();
+                dVoxelLookupTime +=
+                    static_cast<float>(std::chrono::duration_cast<std::chrono::microseconds>(end-start).count());
+            }
+
+
+            if (voxel_set)
             {
                 //std::cout << " isosurface" << std::endl;
 
@@ -175,6 +192,7 @@ void RefreshRenderBuffer(engine_t* ioEngine)
         float load_time =
             static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
         std::cout << "Flood fill " << load_time/1000.f << " s" << std::endl;
+        std::cout << "Lookup " << dVoxelLookupTime/1000000.f << std::endl;
     }
 
     void* data = ioEngine->points.data();
@@ -250,9 +268,17 @@ void EngineReload(engine_t* ioEngine)
 
                                     bool set_voxel = [](numtk::Vec3i64_t const& voxel_world)
                                     {
+                                        return (std::abs(voxel_world[0]) % 8 < 4
+                                                && std::abs(voxel_world[2]) % 8 < 4
+                                                && voxel_world[1] < (16 / ((std::abs(voxel_world[0] / 8) % 8) + 1)))
+                                            || (voxel_world[1] < 1);
                                         //return (voxel_world[1] < 1);
 
                                         numtk::Vec3_t fvoxel_world = VS_to_WS(voxel_world);
+
+                                        fvoxel_world =
+                                            numtk::vec3_add(fvoxel_world,
+                                                            numtk::vec3_constant(0.5f * engine_t::kVoxelScale));
 
                                         float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
 
@@ -322,65 +348,41 @@ void EngineReload(engine_t* ioEngine)
             "float kBaseExtent = iExtent/2.f;\n",
             "vec4 in_position = gl_in[0].gl_Position;",
 
-            "outgs_voxelIndex = in_position.xyz / iExtent;",// + vec3(0.5, 0.5, 0.5) / iExtent - vec3(2.0/iExtent);",
+            "outgs_voxelIndex = in_position.xyz / iExtent;",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
 
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            //"outgs_voxelIndex = in_position.xyz / iExtent;"
             "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
             "EndPrimitive();",
             "}"
@@ -433,6 +435,11 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
     }
 
     {
+        numtk::Quat_t target = numtk::quat_from_euler(ioEngine->camera_euler);
+        ioEngine->camera_current = numtk::quat_normalise(numtk::quat_slerp(ioEngine->camera_current, target, 0.2f));
+    }
+
+    {
         {
             numtk::Vec3_t d{ 0.f, 0.f, 0.f };
 
@@ -451,7 +458,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
                 static constexpr float kLineSpeed = 5.0f;
                 numtk::Vec3_t dp = d;
-                numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
+                numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
                 numtk::Vec3_t wsdp = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::vec3_float_concat(dp, 0.f)));
                 wsdp[1] = 0.f;
                 wsdp = numtk::vec3_normalise(wsdp);
@@ -502,7 +509,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
                         offset += 1.f;
                     }
 
-                    ioEngine->player_position[1] = VS_to_WS(vp)[1];
+                    ioEngine->player_position[1] += (offset-1.f) * engine_t::kVoxelScale;
                     ioEngine->player_velocity = numtk::Vec3_t{ 0.f, 0.f, 0.f };
                 }
                 else
@@ -523,7 +530,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
     }
 
     {
-        numtk::Mat4_t camrot = numtk::mat4_from_quat(numtk::quat_from_euler(ioEngine->camera_euler));
+        numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
         numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, -1.f, 0.f});
         numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
         numtk::Vec3_t campos = numtk::vec3_add(ioEngine->player_position, { 0.f, 1.7f, 0.f });
@@ -549,9 +556,11 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             quick_vdb::Position_t vp = WS_to_VS(p);
             p = WS_to_VS_float(p);
 
+#if 0
             std::cout << "last voxel " << ioEngine->last_voxel[0] << " " << ioEngine->last_voxel[1] << " " << ioEngine->last_voxel[2] << std::endl;
             std::cout << "ro " << p[0] << " " << p[1] << " " << p[2] << std::endl;
             std::cout << "rd " << rd[0] << " " << rd[1] << " " << rd[2] << std::endl;
+#endif
 
             bool hit = false;
             for(;;)
@@ -559,7 +568,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
                 if (numtk::vec3_norm(numtk::vec3_sub(VS_to_WS_float(p), campos)) > 5.f)
                     break;
                 if (ioEngine->vdb.get(vp)) {
-                    std::cout << "Looking at " << vp[0] << " " << vp[1] << " " << vp[2] << std::endl;
+                    //std::cout << "Looking at " << vp[0] << " " << vp[1] << " " << vp[2] << std::endl;
                     hit = true; break; }
 
                 numtk::Vec3_t fract{ std::fmod(p[0], 1.f), std::fmod(p[1], 1.f), std::fmod(p[2], 1.f) };

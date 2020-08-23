@@ -74,6 +74,12 @@ vec3_from_vec4(Vec4_t const& _o)
 }
 
 inline Vec3_t
+vec3_constant(float _op)
+{
+    return Vec3_t{ _op, _op, _op };
+}
+
+inline Vec3_t
 vec3_sub(Vec3_t const& _lhs, Vec3_t const& _rhs)
 {
     return Vec3_t{ _lhs[0]-_rhs[0], _lhs[1]-_rhs[1], _lhs[2]-_rhs[2] };

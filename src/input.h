@@ -38,6 +38,10 @@ struct input_t
     bool mouse_down{ false };
     std::array<int, 2> mouse_pos{ -1, -1 };
     std::array<int, 2> mouse_delta{ 0, 0 };
+
     std::array<bool, 256> key_down;
     std::uint32_t mod_down;
+
+    std::array<bool, 256> back_key_down;
+    std::uint32_t back_mod_down;
 };

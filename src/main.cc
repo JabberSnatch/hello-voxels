@@ -340,7 +340,6 @@ int main(int __argc, char* __argv[])
                             std::cout << "cursor shown" << std::endl;
                         }
                         hide_cursor = !hide_cursor;
-                        //layer_mediator->state_.camera_enable_mouse_control = hide_cursor;
                     }
 
                     std::uint32_t km = 0u;
@@ -352,8 +351,12 @@ int main(int __argc, char* __argv[])
                     std::uint32_t key = (((unsigned)ks & 0xff00) == 0xff00)
                         ? (std::uint32_t)ks
                         : (std::uint32_t)kc;
+
                     if (key < eKey::kASCIIBegin || key >= eKey::kASCIIEnd)
                         key = key_map[key & 0xff];
+                    else
+                        key = (std::uint32_t)std::tolower((unsigned char)key);
+
                     input[0].key_down[key] = (xevent.type == KeyPress);
                 }
             } break;
@@ -407,6 +410,8 @@ int main(int __argc, char* __argv[])
 
             engine_main.run_frame_cb(engine, input);
         }
+        input[0].back_key_down = input[0].key_down;
+        input[0].back_mod_down = input[0].mod_down;
         input[1] = input[0];
 
         glXSwapBuffers(display, window);

@@ -448,28 +448,28 @@ void EngineReload(engine_t* ioEngine)
     {
         static oglbase::ShaderSources_t const vshader{ "#version 430 core\n", R"__lstr__(
 
-const vec2 kTriVertices[] = vec2[3](
-	vec2(-1.0, 3.0), vec2(-1.0, -1.0), vec2(3.0, -1.0)
-);
+            const vec2 kTriVertices[] = vec2[3](
+	            vec2(-1.0, 3.0), vec2(-1.0, -1.0), vec2(3.0, -1.0)
+            );
 
-void main()
-{
-	gl_Position = vec4(kTriVertices[gl_VertexID], 0.0, 1.0);
-}
+            void main()
+            {
+	            gl_Position = vec4(kTriVertices[gl_VertexID], 0.0, 1.0);
+            }
 
         )__lstr__"};
 
         static oglbase::ShaderSources_t const fshader{ "#version 430 core\n", R"__lstr__(
 
-vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
-{
-    vec4 target = vec4(clip_coord, 1.0, 1.0);
-    vec4 ray_direction = perspective_inverse * target;
-    ray_direction = ray_direction / ray_direction.w;
-    return normalize(ray_direction.xyz);
-}
+            vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
+            {
+                vec4 target = vec4(clip_coord, 1.0, 1.0);
+                vec4 ray_direction = perspective_inverse * target;
+                ray_direction = ray_direction / ray_direction.w;
+                return normalize(ray_direction.xyz);
+            }
 
-float maxc(vec3 v) {return max(max(v.x, v.y), v.z); }
+            float maxc(vec3 v) {return max(max(v.x, v.y), v.z); }
 
             uniform mat4 iInvProj;
             uniform vec2 iResolution;
@@ -553,11 +553,11 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             ioEngine->player_on_ground = false;
         }
 
-        if (iInput->key_down['j'])
+        if (!iInput->key_down['j'] && iInput->back_key_down['j']) // on release
         {
             ioEngine->noclip_mode = !ioEngine->noclip_mode;
-            //ioEngine->player_on_ground = false;
-            std::cout << "j down noclip mode " << ioEngine->noclip_mode << std::endl;
+            ioEngine->player_on_ground = false;
+            std::cout << "Noclip mode " << (ioEngine->noclip_mode ? "enabled" : "disabled") << std::endl;
         }
 
         {

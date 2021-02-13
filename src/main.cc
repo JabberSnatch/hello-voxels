@@ -227,7 +227,7 @@ int main(int __argc, char* __argv[])
         std::cerr << "glew failed to initalize." << std::endl;
     }
 
-    //glXSwapIntervalMESA(1);
+    glXSwapIntervalMESA(1);
     //glXSwapIntervalEXT(display, window, 1);
 	std::cout << "GL init complete : " << std::endl;
 	std::cout << "OpenGL version : " << glGetString(GL_VERSION) << std::endl;
@@ -419,7 +419,7 @@ int main(int __argc, char* __argv[])
         i = (i + 1) & kFrameInterval;
         if (!i)
         {
-            std::cout << "avg frame_time: " << (frame_time / float(kFrameInterval)) << std::endl;
+            std::cout << "avg frame_time: " << (frame_time / float(kFrameInterval)) << " ms" << std::endl;
             frame_time = 0.f;
         }
     }

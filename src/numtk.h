@@ -25,6 +25,8 @@ using Mat4_t = std::array<float, 16>;
 using Quat_t = std::array<float, 4>;
 using dQuat_t = std::array<float, 8>;
 
+constexpr float kPi = 3.1415926535f;
+
 inline Vec2i_t
 vec2i_sub(Vec2i_t const& _lhs, Vec2i_t const&_rhs)
 {
@@ -271,6 +273,21 @@ mat4_from_quat(Quat_t const& _op)
     };
 }
 
+/*
+
+mat4 perspective_hfov(float n, float f, float alpha, float aspect)
+{
+	float inverse_tan_half_alpha = 1.0 / tan(alpha * 0.5);
+	return mat4(
+		inverse_tan_half_alpha, 0.0, 0.0, 0.0,
+		0.0, (1.0/aspect)*inverse_tan_half_alpha, 0.0, 0.0,
+		0.0, 0.0, (-(f+n))/(f-n), -1.0,
+		0.0, 0.0, (-2.0*f*n)/(f-n), 0.0
+	);
+}
+
+*/
+
 inline Mat4_t
 mat4_perspective(float n, float f, float alpha, float how)
 {
@@ -284,6 +301,33 @@ mat4_perspective(float n, float f, float alpha, float how)
     };
 }
 
+/*
+
+mat4 perspective_inverse_hfov(float n, float f, float alpha, float aspect)
+{
+	float tan_half_alpha = tan(alpha * 0.5) / 1.0;
+	return mat4(
+		tan_half_alpha, 0.0, 0.0, 0.0,
+		0.0, aspect * tan_half_alpha, 0.0, 0.0,
+		0.0, 0.0, 0.0, (f-n)/(-2.0*f*n),
+		0.0, 0.0, -1.0, (f+n)/(2.0*f*n)
+	);
+}
+
+ */
+
+inline Mat4_t
+mat4_perspectiveinv(float n, float f, float alpha, float how)
+{
+	float tan_half_alpha = tan(alpha * 0.5f);
+	return Mat4_t{
+		tan_half_alpha, 0.0f, 0.0f, 0.0f,
+		0.0f, how * tan_half_alpha, 0.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, (f-n)/(-2.0f*f*n),
+		0.0f, 0.0f, -1.0f, (f+n)/(2.0f*f*n)
+	};
+}
+
 inline Mat4_t
 mat4_view(Vec3_t const& _f, Vec3_t const& _u, Vec3_t const& _p)
 {
@@ -295,6 +339,19 @@ mat4_view(Vec3_t const& _f, Vec3_t const& _u, Vec3_t const& _p)
                            numtk::Vec4_t{l[1], _u[1], _f[1], 0.f},
                            numtk::Vec4_t{l[2], _u[2], _f[2], 0.f},
                            numtk::vec3_float_concat(t, 1.f));
+}
+
+inline Mat4_t
+mat4_viewinv(Vec3_t const& _f, Vec3_t const& _u, Vec3_t const& _p)
+{
+    numtk::Vec3_t const u = numtk::vec3_float_mul(_u, 1.f);
+    numtk::Vec3_t const f = numtk::vec3_float_mul(_f, 1.f);
+    numtk::Vec3_t const l = numtk::vec3_normalise(numtk::vec3_cross(u, f));
+
+    return numtk::mat4_col(numtk::vec3_float_concat(l, 0.f),
+                           numtk::vec3_float_concat(u, 0.f),
+                           numtk::vec3_float_concat(f, 0.f),
+                           numtk::vec3_float_concat(_p, 1.f));
 }
 
 inline Quat_t
@@ -346,10 +403,16 @@ quat_float_mul(Quat_t const& _lhs, float _rhs)
     return (Quat_t)vec4_float_mul((Vec4_t)_lhs, _rhs);
 }
 
+inline float
+quat_norm(Quat_t const& _op)
+{
+    return std::sqrt(vec4_dot((Vec4_t)_op, (Vec4_t)_op));
+}
+
 inline Quat_t
 quat_normalise(Quat_t const& _op)
 {
-    return quat_float_mul(_op, 1.f / std::sqrt(vec4_dot((Vec4_t)_op, (Vec4_t)_op)));
+    return quat_float_mul(_op, 1.f / quat_norm(_op));
 }
 
 inline Quat_t
@@ -390,7 +453,7 @@ quat_slerp(Quat_t const& _lhs, Quat_t const& _rhs, float _t)
     float t_theta = _t * theta;
     float sinth = std::sin(theta);
     float f0 = std::sin(theta - t_theta) / sinth;
-    float f1 = std::sin(t_theta) / sinth;
+    float f1 = sign * (std::sin(t_theta) / sinth);
     return quat_add(quat_float_mul(_lhs, f0), quat_float_mul(_rhs, f1));
 }
 

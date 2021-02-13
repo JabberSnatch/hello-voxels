@@ -12,10 +12,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(OpenGL REQUIRED)
-find_package(GLEW REQUIRED PATHS ${LIB_DIR})
+find_package(GLEW REQUIRED) # PATHS ${LIB_DIR})
 find_package(X11 REQUIRED)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall")
 
 set(QVDB_BUILD_TESTS OFF CACHE BOOL "Disable qvdb tests")
 add_subdirectory(src/quick_vdb)

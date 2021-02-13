@@ -13,7 +13,6 @@
 #include <cmath>
 #include <cstdint>
 
-
 namespace numtk {
 
 using Vec2i_t = std::array<int, 2>;
@@ -447,14 +446,100 @@ quat_from_euler(numtk::Vec3_t const& _e)
 inline Quat_t
 quat_slerp(Quat_t const& _lhs, Quat_t const& _rhs, float _t)
 {
+#if 0
     float costh = vec3_dot(*(Vec3_t*)&_lhs[1], *(Vec3_t*)&_rhs[1]);
     float sign = (costh < 0.f) ? -1.f : 1.f;
     float theta = std::acos(costh);
+    if (std::abs(theta) < 0.0001f)
+        return _rhs;
+
     float t_theta = _t * theta;
     float sinth = std::sin(theta);
     float f0 = std::sin(theta - t_theta) / sinth;
     float f1 = sign * (std::sin(t_theta) / sinth);
-    return quat_add(quat_float_mul(_lhs, f0), quat_float_mul(_rhs, f1));
+    Quat_t result = quat_add(quat_float_mul(_lhs, f0), quat_float_mul(_rhs, f1));
+    return result;
+#else
+
+    // A Fast and Accurate Algorithm for Computing SLERP, Eberly 2011
+    // Port of https://github.com/CesiumCG/cesium implementation
+
+    static constexpr float kopmu = 1.90110745351730037f;
+
+    /*
+    for (var i = 0; i < 7; ++i) {
+        var s = i + 1.0;
+        var t = 2.0 * s + 1.0;
+        u[i] = 1.0 / (s * t);
+        v[i] = s / t;
+    }
+
+    u[7] = opmu / (8.0 * 17.0);
+    v[7] = opmu * 8.0 / 17.0;
+    */
+
+    static const float u[8] = {
+        1.f / 3.f,
+        1.f / 10.f,
+        1.f / 21.f,
+        1.f / 36.f,
+        1.f / 55.f,
+        1.f / 78.f,
+        1.f / 105.f,
+        kopmu / 136.f
+    };
+
+    static const float v[8] = {
+        1.f / 3.f,
+        2.f / 5.f,
+        3.f / 7.f,
+        4.f / 9.f,
+        5.f / 11.f,
+        6.f / 13.f,
+        7.f / 15.f,
+        kopmu * 8.f / 17.f
+    };
+
+    float dot = vec4_dot((Vec4_t const&)_lhs, (Vec4_t const&)_rhs);
+    float const sign = (dot < 0.f) ? -1.f : 1.f;
+    dot = sign * dot;
+
+    float const dotminus1 = dot - 1.f;
+    float const d = 1.f - _t;
+    float const sqrT = _t * _t;
+    float const sqrD = d * d;
+
+    float bT[8];
+    float bD[8];
+    for (int i = 0; i < 8; ++i)
+    {
+        bT[i] = (u[i] * sqrT - v[i]) * dotminus1;
+        bD[i] = (u[i] * sqrD - v[i]) * dotminus1;
+    }
+
+    float const cT = sign * _t * (
+        1.f + bT[0] * (
+            1.f + bT[1] * (
+                1.f + bT[2] * (
+                    1.f + bT[3] * (
+                        1.f + bT[4] * (
+                            1.f + bT[5] * (
+                                1.f + bT[6] * (
+                                    1.f + bT[7]))))))));
+
+    float const cD = d *(
+        1.f + bD[0] * (
+            1.f + bD[1] * (
+                1.f + bD[2] * (
+                    1.f + bD[3] * (
+                        1.f + bD[4] * (
+                            1.f + bD[5] * (
+                                1.f + bD[6] * (
+                                    1.f + bD[7]))))))));
+
+    Quat_t result = quat_add(quat_float_mul(_lhs, cD), quat_float_mul(_rhs, cT));
+    return result;
+#endif
 }
 
 inline dQuat_t

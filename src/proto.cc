@@ -45,7 +45,7 @@ struct engine_t
 
     static constexpr unsigned kLog2ChunkSize = 4u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 2;
+    static constexpr int kChunkLoadRadius = 3;
     static constexpr float kVoxelScale = .25f;
     using VDB_t =
         quick_vdb::RootNode<quick_vdb::BranchNode<quick_vdb::LeafNode<kLog2ChunkSize / 2>, kLog2ChunkSize / 2>>;
@@ -630,9 +630,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
         if (!ioEngine->noclip_mode)
         {
-            std::cout << "Player on ground  " << ioEngine->player_on_ground << std::endl;
-            std::cout << "position " << ioEngine->player_position[0] << " " << ioEngine->player_position[1] << " " << ioEngine->player_position[2] << std::endl;
-
             if (!ioEngine->player_on_ground)
             {
                 static const numtk::Vec3_t g = { 0.f, -9.8f, 0.f };
@@ -650,7 +647,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
             {
                 quick_vdb::Position_t vp = WS_to_VS(ioEngine->player_position);
-                std::cout << "vp " << vp[0] << " " << vp[1] << " " << vp[2] << std::endl;
 
                 if (ioEngine->last_voxel != vp)
                 {
@@ -690,7 +686,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
     }
 
     {
-        std::cout << "camera current " << ioEngine->camera_current[0] << " " << ioEngine->camera_current[1] << " " << ioEngine->camera_current[2] << " " << ioEngine->camera_current[3] << std::endl;
         numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
 
         numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, -1.f, 0.f});

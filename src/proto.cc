@@ -10,12 +10,16 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstring>
 #include <iostream>
 #include <numeric>
 #include <set>
+#include <thread>
 #include <vector>
 
 #include "numtk.h"
+#define QVDB_ENABLE_CACHE
+//#define QVDB_STD_BITSET
 #include "quick_vdb.hpp"
 
 #include "oglbase/handle.h"
@@ -25,6 +29,7 @@
 #include "GL/gl.h"
 
 #include "input.h"
+#include "timer.h"
 
 constexpr bool kGeometryPipeline = true;
 constexpr bool kFragmentPipeline = false;
@@ -38,6 +43,7 @@ struct engine_t
 
     numtk::Vec3_t player_position{ 0.f, 32.f, 0.f };
     numtk::Vec3_t player_velocity{ 0.f, -5.f, 0.f };
+    numtk::Vec3i64_t player_chunk_base{ ~0, ~0, ~0 };
     bool noclip_mode = false;
     bool player_on_ground = false;
     numtk::Vec3i64_t last_voxel{};
@@ -45,13 +51,13 @@ struct engine_t
 
     static constexpr unsigned kLog2ChunkSize = 4u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 3;
+    static constexpr int kChunkLoadRadius = 6;
     static constexpr float kVoxelScale = .25f;
-    using VDB_t =
-        quick_vdb::RootNode<quick_vdb::BranchNode<quick_vdb::LeafNode<kLog2ChunkSize / 2>, kLog2ChunkSize / 2>>;
+    using VDB_t = quick_vdb::RootNode< quick_vdb::BranchNode< quick_vdb::BranchNode<
+                  quick_vdb::LeafNode<kLog2ChunkSize>, 4u>, 4u>>;
     VDB_t vdb = {};
 
-    numtk::Vec3i64_t eye_position = { 0, 16, 0 };
+    numtk::Vec3i64_t eye_position = { 0, 0, 0 };
 
     std::set<numtk::Vec3i64_t> loaded_chunks{};
 
@@ -61,6 +67,11 @@ struct engine_t
     oglbase::BufferPtr vbo{};
     oglbase::VAOPtr vao{};
     oglbase::ProgramPtr shader_program{};
+
+    oglbase::BufferPtr staging_buffer{};
+    oglbase::TexturePtr chunk_texture{};
+    oglbase::SamplerPtr sampler{};
+    GLuint64 chunk_handle{};
 };
 
 numtk::Vec3i64_t ComputeChunkCoordinates(numtk::Vec3i64_t const& _p)
@@ -248,10 +259,8 @@ void RefreshRenderBuffer(engine_t* ioEngine)
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    if (kFragmentPipeline) // compute shader pipeline
+    if (kFragmentPipeline)
     {
-        ioEngine->vao.reset(0u);
-        glGenVertexArrays(1, ioEngine->vao.get());
     }
 }
 
@@ -281,20 +290,24 @@ void EngineReload(engine_t* ioEngine)
         using StdClock = std::chrono::high_resolution_clock;
         auto start = StdClock::now();
 
-        numtk::Vec3i64_t load_bounds_min =
+        numtk::Vec3i64_t const load_bounds_min =
             numtk::vec3i64_add(chunk, { -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius });
+        numtk::Vec3i64_t const load_bounds_max =
+            numtk::vec3i64_add(chunk, { engine_t::kChunkLoadRadius, engine_t::kChunkLoadRadius, engine_t::kChunkLoadRadius });
+        std::uint64_t const chunk_count = (engine_t::kChunkLoadRadius*2+1) * (engine_t::kChunkLoadRadius*2+1) *(engine_t::kChunkLoadRadius*2+1);
 
-        for (std::int64_t z = 0; z <= engine_t::kChunkLoadRadius*2; ++z)
+
+        for (std::int64_t z = load_bounds_min[2]; z <= load_bounds_max[2]; ++z)
         {
-            for (std::int64_t y = 0; y <= engine_t::kChunkLoadRadius*2; ++y)
+            for (std::int64_t y = load_bounds_min[1]; y <= load_bounds_max[1]; ++y)
             {
-                for (std::int64_t x = 0; x <= engine_t::kChunkLoadRadius*2; ++x)
+                for (std::int64_t x = load_bounds_min[0]; x <= load_bounds_max[0]; ++x)
                 {
-                    numtk::Vec3i64_t chunk_index{ x, y, z };
-                    numtk::Vec3i64_t chunk_world = numtk::vec3i64_add(load_bounds_min, chunk_index);
+                    numtk::Vec3i64_t chunk_world{ x, y, z };
 
                     if (!ioEngine->loaded_chunks.count(chunk_world))
                     {
+
                         std::int64_t chunk_size = 1 << engine_t::kLog2ChunkSize;
                         numtk::Vec3i64_t chunk_voxel_base = numtk::vec3i64_int_mul(chunk_world, chunk_size);
                         for (std::int64_t vz = 0; vz < chunk_size; ++vz)
@@ -308,6 +321,11 @@ void EngineReload(engine_t* ioEngine)
 
                                     bool set_voxel = [](numtk::Vec3i64_t const& voxel_world)
                                     {
+#if 0
+                                        return ((voxel_world[0] & 1u)
+                                                & (voxel_world[1] & 1u)
+                                                & (voxel_world[2] & 1u)) != 0u;
+#endif
                                         //return (voxel_world[1] < 16);
 
 #if 0
@@ -350,7 +368,9 @@ void EngineReload(engine_t* ioEngine)
         auto end = StdClock::now();
         float load_time =
             static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
+        float chunk_average = load_time / (float)chunk_count;
         std::cout << "Voxel generation " << load_time/1000.f << " s" << std::endl;
+        std::cout << "  Chunk average " << chunk_average/1000.f << " s" << std::endl;
     } // VOXEL GENERATION
 
     RefreshRenderBuffer(ioEngine);
@@ -373,9 +393,11 @@ void EngineReload(engine_t* ioEngine)
             void main()
             {
                 vec3 color = clamp(outgs_voxelIndex / 32.0, -1.0, 1.0);
-                color = color * 0.5 + vec3(0.5);
+                //color = color * 0.5 + vec3(0.5);
+
                 //color = floor(mod(outgs_voxelIndex, vec3(2.0, 2.0, 2.0)));
-                if (outgs_voxelIndex[0] == 0.f || outgs_voxelIndex[2] == 0.f)// || outgs_voxelIndex[1] == 0.f)
+
+                if (outgs_voxelIndex[0] == 0.f || outgs_voxelIndex[2] == 0.f) // || outgs_voxelIndex[1] == 0.f)
                     color = vec3(1.0, 0.0, 0.0);
                 if (iLookAtVoxel == outgs_voxelIndex)
                     color = vec3(0.2, 0.2, 0.2);
@@ -461,6 +483,8 @@ void EngineReload(engine_t* ioEngine)
 
         static oglbase::ShaderSources_t const fshader{ "#version 430 core\n", R"__lstr__(
 
+            #extension GL_ARB_bindless_texture : require
+
             vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
             {
                 vec4 target = vec4(clip_coord, 1.0, 1.0);
@@ -476,7 +500,7 @@ void EngineReload(engine_t* ioEngine)
 
             uniform float iExtent;
 
-            uniform sampler3D iChunk;
+            layout(bindless_sampler) uniform sampler3D iChunk;
             uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
 
             layout(location = 0) out vec4 color;
@@ -486,12 +510,12 @@ void EngineReload(engine_t* ioEngine)
                 vec2 frag_coord = vec2(gl_FragCoord.xy);
 	            vec2 clip_coord = ((frag_coord / iResolution) - 0.5) * 2.0;
 
-                vec3 rd = raydir_frommat((iInvProj), clip_coord);
-                vec3 ro = iChunkLocalCamPos - vec3(0.5, 0.5, 0.5);
+                vec3 rd = raydir_frommat(iInvProj, clip_coord);
+                vec3 ro = iChunkLocalCamPos;// - vec3(0.5, 0.5, 0.5);
 
                 float winding = (maxc(abs(ro))< 1.0) ? -1.0 : 1.0;
                 vec3 sgn = -sign(rd);
-                vec3 d = winding * sgn - ro;
+                vec3 d = (winding * sgn - ro) / rd;
 
             #define TEST(U, V, W) \
                 (d.U >= 0.0) && all(lessThan(abs(vec2(ro.V, ro.W) + vec2(rd.V, rd.W)*d.U), vec2(1.0)))
@@ -515,6 +539,8 @@ void EngineReload(engine_t* ioEngine)
                 if (hit)
                 {
                     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
+                    vec3 hitp = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
+                    color.xyz = texture(iChunk, hitp).xxx;
                 }
             }
 
@@ -528,14 +554,49 @@ void EngineReload(engine_t* ioEngine)
         oglbase::ProgramPtr program = oglbase::LinkProgram({ fbin, vbin }, &log);
         std::cout << "Link " << log << std::endl;
         ioEngine->shader_program = std::move(program);
+
+        ioEngine->vao.reset(0u);
+        glGenVertexArrays(1, ioEngine->vao.get());
+
+        ioEngine->chunk_texture.reset(0u);
+        glCreateTextures(GL_TEXTURE_3D, 1, ioEngine->chunk_texture.get());
+        glTextureStorage3D(ioEngine->chunk_texture, 1, GL_R8,
+                           1u << engine_t::kLog2ChunkSize,
+                           1u << engine_t::kLog2ChunkSize,
+                           1u << engine_t::kLog2ChunkSize);
+
+        ioEngine->sampler.reset(0u);
+        glGenSamplers(1, ioEngine->sampler.get());
+        glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_WRAP_R, GL_REPEAT);
+        glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        ioEngine->staging_buffer.reset(0u);
+        glCreateBuffers(1, ioEngine->staging_buffer.get());
+        glNamedBufferStorage(ioEngine->staging_buffer,
+                             1u << (engine_t::kLog2ChunkSize * 3u),
+                             nullptr,
+                             GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT);
+
+        ioEngine->chunk_handle = glGetTextureSamplerHandleARB(ioEngine->chunk_texture, ioEngine->sampler);
     }
 }
 
-void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
+void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
 {
-    static constexpr float kFrameTime = 0.016f;
+    //static constexpr float kFrameTime = 0.016f;
+    const float kFrameTime = update_dt;
+
+    if (false)
+    {
+        using namespace std::chrono_literals;
+        std::this_thread::sleep_for(1ms);
+    }
 
 #if 0
+    std::cout << "input time " << update_dt << std::endl;
     std::cout << iInput->key_down[' '] << " "
               << ((iInput->mod_down & fKeyMod::kShift) != 0) << std::endl
               << iInput->key_down['w'] << " "
@@ -605,7 +666,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             {
                 d = numtk::vec3_normalise(d);
 
-                static constexpr float kLineSpeed = 1.0f;
+                static constexpr float kLineSpeed = 5.0f;
                 numtk::Vec3_t dp = d;
                 numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
                 numtk::Vec3_t wsdp = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::vec3_float_concat(dp, 0.f)));
@@ -828,6 +889,83 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
     if (kFragmentPipeline) // compute shader pipeline
     {
+
+        numtk::Vec3i64_t player_chunk_base = ioEngine->vdb.GetChildBase<0>(
+            WS_to_VS(ioEngine->player_position));
+        if (player_chunk_base != ioEngine->player_chunk_base)
+        {
+            Timer<Info> timer0("UploadChunk");
+            std::cout << "Entered new chunk" << std::endl;
+
+            std::size_t size = 0u;
+            std::uint64_t const* buffer = nullptr;
+            numtk::Vec3i64_t voxelp = WS_to_VS(ioEngine->player_position);
+            ioEngine->vdb.GetLeafPointer(voxelp, &size, &buffer);
+
+            if (size != -1ull)
+            {
+                bool unmap_successful = false;
+
+                if (size == 0)
+                {
+                    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, ioEngine->staging_buffer);
+                    unsigned char* dest = (unsigned char*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER,
+                                                                      GL_WRITE_ONLY);
+
+                    bool value = (bool)buffer;
+                    std::memset(dest, value ? 0xff : 0, size * 64);
+
+                    unmap_successful = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+                    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
+                }
+                else
+                {
+                    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, ioEngine->staging_buffer);
+                    unsigned char* dest = (unsigned char*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER,
+                                                                      GL_WRITE_ONLY);
+
+                    for (int i = 0; i < size; ++i)
+                    {
+                        std::uint64_t v = buffer[i];
+                        int bit_index = 0u;
+                        while (v)
+                        {
+                            std::uint8_t const d = (v & 1u) ? 0xff : 0x00;
+                            dest[i * 64 + bit_index] = d;
+                            v >>= 1;
+                            ++bit_index;
+                        }
+
+                        if (bit_index < 64u)
+                            std::memset(&dest[i * 64 + bit_index], 0, (64 - bit_index));
+                    }
+
+                    unmap_successful = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+                    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
+                }
+
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, ioEngine->staging_buffer);
+                glBindTexture(GL_TEXTURE_3D, ioEngine->chunk_texture);
+
+                static const GLsizei kTextureSide = 1 << engine_t::kLog2ChunkSize;
+                glTexSubImage3D(GL_TEXTURE_3D, 0,
+                                0, 0, 0, kTextureSide, kTextureSide, kTextureSide,
+                                GL_RED, GL_UNSIGNED_BYTE, nullptr);
+
+                glBindTexture(GL_TEXTURE_3D, 0u);
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
+            }
+
+            GLenum error_code = glGetError();
+            if (error_code != GL_NO_ERROR)
+                std::cout << "woah there" << std::endl;
+
+
+            ioEngine->player_chunk_base = player_chunk_base;
+        }
+
+        glMakeTextureHandleResidentARB(ioEngine->chunk_handle);
+
         glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);
 
         glUseProgram(ioEngine->shader_program);
@@ -849,12 +987,14 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             numtk::Vec3_t const eye_position = ioEngine->player_position;
             numtk::Vec3_t const chunklocal = WS_to_VS_float(eye_position);
             //ComputeChunkLocalCoordinates(eye_position);
-            std::cout << "Chunk local " << chunklocal[0] << " " << chunklocal[1] << " " << chunklocal[2] << std::endl;
+            //std::cout << "Chunk local " << chunklocal[0] << " " << chunklocal[1] << " " << chunklocal[2] << std::endl;
             int const chunkLocalCamPos_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkLocalCamPos");
             if (chunkLocalCamPos_loc >= 0)
                 glUniform3fv(chunkLocalCamPos_loc, 1, &chunklocal[0]);
 
-
+            int const chunk_loc = glGetUniformLocation(ioEngine->shader_program, "iChunk");
+            if (chunk_loc >= 0)
+                glUniformHandleui64ARB(chunk_loc, ioEngine->chunk_handle);
         }
 
 #if 1
@@ -866,6 +1006,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 #endif
 
         glUseProgram(0u);
+        glMakeTextureHandleNonResidentARB(ioEngine->chunk_handle);
     }
 }
 

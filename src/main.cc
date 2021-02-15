@@ -34,12 +34,13 @@
 #include "input.h"
 #include "numtk.h"
 
-using proc_glXCreateContextAttribsARB =
-    GLXContext(*)(Display*, GLXFBConfig, GLXContext, Bool, int const*);
-using proc_glXSwapIntervalEXT =
-    void(*)(Display*, GLXDrawable, int);
-using proc_glXSwapIntervalMESA =
-    int(*)(unsigned);
+#ifdef ENABLE_GL_DEBUG_CONTEXT
+#include "oglbase/error.h"
+#endif
+
+using proc_glXCreateContextAttribsARB = GLXContext(*)(Display*, GLXFBConfig, GLXContext, Bool, int const*);
+using proc_glXSwapIntervalEXT = void(*)(Display*, GLXDrawable, int);
+using proc_glXSwapIntervalMESA = int(*)(unsigned);
 
 static const int kVisualAttributes[] = {
     GLX_X_RENDERABLE, True,
@@ -59,8 +60,7 @@ static const int kVisualAttributes[] = {
 static const int kGLContextAttributes[] = {
     GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
     GLX_CONTEXT_MINOR_VERSION_ARB, 5,
-    //#define SR_GL_DEBUG_CONTEXT
-#ifdef SR_GL_DEBUG_CONTEXT
+#ifdef ENABLE_GL_DEBUG_CONTEXT
     GLX_CONTEXT_FLAGS_ARB, GLX_CONTEXT_DEBUG_BIT_ARB,
 #endif
     None
@@ -76,7 +76,7 @@ struct engine_module_t
     void* hlib;
     time_t last_load_time;
 
-    void (*run_frame_cb)(void*, void*);
+    void (*run_frame_cb)(void*, void*, float);
     void (*init_cb)(void**);
     void (*shutdown_cb)(void*);
     void (*onreload_cb)(void*);
@@ -227,8 +227,8 @@ int main(int __argc, char* __argv[])
         std::cerr << "glew failed to initalize." << std::endl;
     }
 
-    glXSwapIntervalMESA(1);
-    //glXSwapIntervalEXT(display, window, 1);
+    //glXSwapIntervalMESA(1);
+    glXSwapIntervalEXT(display, window, 1);
 	std::cout << "GL init complete : " << std::endl;
 	std::cout << "OpenGL version : " << glGetString(GL_VERSION) << std::endl;
 	std::cout << "Manufacturer : " << glGetString(GL_VENDOR) << std::endl;
@@ -284,8 +284,9 @@ int main(int __argc, char* __argv[])
 
     glXMakeCurrent(display, window, glx_context);
     int i = 0;
-    float frame_time = 0.f;
+    float time_accum = 0.f;
     float last_frame_time = 0.f;
+    float last_average_time = 0.f;
     bool hide_cursor = false;
 
     for(bool run = true; run;)
@@ -408,8 +409,11 @@ int main(int __argc, char* __argv[])
                 input[0].mouse_delta = numtk::Vec2i_t{ 0, 0 };
             }
 
-            engine_main.run_frame_cb(engine, input);
+            float update_time = last_frame_time;
+            update_time = std::max(0.001f, update_time);
+            engine_main.run_frame_cb(engine, input, update_time);
         }
+
         input[0].back_key_down = input[0].key_down;
         input[0].back_mod_down = input[0].mod_down;
         input[1] = input[0];
@@ -418,14 +422,16 @@ int main(int __argc, char* __argv[])
 
         auto end = StdClock::now();
         float measured_time = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
-        frame_time += measured_time;
+        time_accum += measured_time;
         last_frame_time = measured_time / 1000.f;
+
         static int const kFrameInterval = 0xff;
         i = (i + 1) & kFrameInterval;
         if (!i)
         {
-            std::cout << "avg frame_time: " << (frame_time / float(kFrameInterval)) << " ms" << std::endl;
-            frame_time = 0.f;
+            std::cout << "avg frame_time: " << (time_accum / float(kFrameInterval)) << " ms" << std::endl;
+            last_average_time = time_accum / (float(kFrameInterval) * 1000.f);
+            time_accum = 0.f;
         }
     }
     glXMakeCurrent(display, 0, 0);
@@ -475,7 +481,7 @@ bool UpdateEngineModule(engine_module_t& _module)
     if (_module.hlib)
     {
         // load funcs
-        _module.run_frame_cb = (void(*)(void*, void*))dlsym(_module.hlib, "EngineRunFrame");
+        _module.run_frame_cb = (void(*)(void*, void*, float))dlsym(_module.hlib, "EngineRunFrame");
         if (!_module.run_frame_cb)
             std::cout << "EngineRunFrame not found" << std::endl;
 

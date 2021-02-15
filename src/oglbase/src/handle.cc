@@ -77,6 +77,14 @@ struct FBODeleter
     }
 };
 
+struct SamplerDeleter
+{
+    void operator()(GLuint _sampler)
+    {
+        std::cout << "gl sampler deleted " << _sampler << std::endl;
+        glDeleteSamplers(1, &_sampler);
+    }
+};
 
 template struct Handle<ProgramDeleter>;
 template struct Handle<ShaderDeleter>;
@@ -84,6 +92,7 @@ template struct Handle<TextureDeleter>;
 template struct Handle<VAODeleter>;
 template struct Handle<BufferDeleter>;
 template struct Handle<FBODeleter>;
+template struct Handle<SamplerDeleter>;
 
 
 } // namespace oglbase

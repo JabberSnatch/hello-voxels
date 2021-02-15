@@ -17,13 +17,15 @@ find_package(X11 REQUIRED)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall")
 
-set(QVDB_BUILD_TESTS OFF CACHE BOOL "Disable qvdb tests")
+set(QVDB_BUILD_TESTS ON CACHE BOOL "Disable qvdb tests")
+set(QVDB_ENABLE_CACHE OFF CACHE BOOL "Enable qvdb cache")
 add_subdirectory(src/quick_vdb)
 
 add_subdirectory(src/oglbase)
 
 add_library(engine SHARED ${SOURCE_DIR}/proto.cc)
 target_link_libraries(engine PRIVATE oglbase qvdb)
+
 
 add_executable(explorer ${SOURCE_DIR}/main.cc)
 target_link_libraries(explorer
@@ -34,3 +36,10 @@ target_link_libraries(explorer
 		OpenGL::GL
 		GLEW::GLEW
 )
+
+if (ENABLE_GL_DEBUG_CONTEXT)
+  target_link_libraries(explorer
+	PRIVATE
+		oglbase
+  )
+endif()

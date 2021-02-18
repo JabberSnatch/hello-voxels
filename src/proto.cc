@@ -31,19 +31,20 @@
 #include "input.h"
 #include "timer.h"
 
-constexpr bool kGeometryPipeline = true;
-constexpr bool kFragmentPipeline = false;
+constexpr bool kGeometryPipeline = false;
+constexpr bool kFragmentPipeline = true;
 
 struct engine_t
 {
     numtk::Vec3_t camera_euler{ 0.f, 0.f, 0.f };
     numtk::Quat_t camera_current{};
+    numtk::Vec3_t campos{ 0.f, 0.f, 0.f };
     numtk::Mat4_t projection_matrix = numtk::mat4_id();
     numtk::Mat4_t projection_invmatrix = numtk::mat4_id();
+    numtk::Vec3i64_t campos_chunk_base{ ~0, ~0, ~0 };
 
     numtk::Vec3_t player_position{ 0.f, 32.f, 0.f };
     numtk::Vec3_t player_velocity{ 0.f, -5.f, 0.f };
-    numtk::Vec3i64_t player_chunk_base{ ~0, ~0, ~0 };
     bool noclip_mode = false;
     bool player_on_ground = false;
     numtk::Vec3i64_t last_voxel{};
@@ -106,7 +107,7 @@ numtk::Vec3_t ComputeChunkLocalCoordinates(numtk::Vec3_t const& _p)
 numtk::Vec3_t WS_to_VS_float(numtk::Vec3_t const& _p)
 {
     numtk::Vec3_t vs = numtk::vec3_float_mul(_p, 1.f/engine_t::kVoxelScale); //-.125 * 4 = -.5
-    vs = numtk::vec3_add(vs, { 0.5f, 0.5f, 0.5f });
+    //vs = numtk::vec3_add(vs, { 0.5f, 0.5f, 0.5f });
     return vs;
 
     // [0.125, 0.375] => 1.x || .125 * 4 = 1.0
@@ -118,15 +119,15 @@ numtk::Vec3i64_t WS_to_VS(numtk::Vec3_t const& _p)
 {
     numtk::Vec3_t vs = WS_to_VS_float(_p);
     return numtk::Vec3i64_t{
-        (std::int64_t)std::trunc(vs[0]),
-        (std::int64_t)std::trunc(vs[1]),
-        (std::int64_t)std::trunc(vs[2])
+        (std::int64_t)std::floor(vs[0]),
+        (std::int64_t)std::floor(vs[1]),
+        (std::int64_t)std::floor(vs[2])
     };
 }
 
 numtk::Vec3_t VS_to_WS_float(numtk::Vec3_t const& _p)
 {
-    numtk::Vec3_t ws = numtk::vec3_sub(_p, { 0.5f, 0.5f, 0.5f });
+    numtk::Vec3_t ws = _p;//numtk::vec3_sub(_p, { 0.5f, 0.5f, 0.5f });
     ws = numtk::vec3_float_mul(ws, engine_t::kVoxelScale);
     return ws;
 }
@@ -501,6 +502,7 @@ void EngineReload(engine_t* ioEngine)
             uniform float iExtent;
 
             layout(bindless_sampler) uniform sampler3D iChunk;
+            uniform float iChunkExtent;
             uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
 
             layout(location = 0) out vec4 color;
@@ -511,14 +513,17 @@ void EngineReload(engine_t* ioEngine)
 	            vec2 clip_coord = ((frag_coord / iResolution) - 0.5) * 2.0;
 
                 vec3 rd = raydir_frommat(iInvProj, clip_coord);
-                vec3 ro = iChunkLocalCamPos;// - vec3(0.5, 0.5, 0.5);
+                vec3 ro = iChunkLocalCamPos;// - vec3(0.5);
 
-                float winding = (maxc(abs(ro))< 1.0) ? -1.0 : 1.0;
+#if 0
+                ro = iChunkLocalCamPos - vec3(0.5);
+
+                float winding = (maxc(abs(ro) * 2.0) < 1.0) ? -1.0 : 1.0;
                 vec3 sgn = -sign(rd);
-                vec3 d = (winding * sgn - ro) / rd;
+                vec3 d = (0.5 * winding * sgn - ro) / rd;
 
             #define TEST(U, V, W) \
-                (d.U >= 0.0) && all(lessThan(abs(vec2(ro.V, ro.W) + vec2(rd.V, rd.W)*d.U), vec2(1.0)))
+                (d.U >= 0.0) && all(lessThan(abs(vec2(ro.V, ro.W) + vec2(rd.V, rd.W)*d.U), vec2(0.5)))
 
             bvec3 test = bvec3(
                 TEST(x, y, z),
@@ -528,7 +533,7 @@ void EngineReload(engine_t* ioEngine)
             #undef TEST
 
 
-            sgn = test.x ? vec3(sgn.x,0,0) : (test.y ? vec3(0,sgn.y,0) : vec3(0,0,test.z ? sgn.z : 0));
+            sgn = test.x ? vec3(sgn.x,0,0) : (test.y ? vec3(0,sgn.y,0) : vec3(0, 0,test.z ? sgn.z : 0));
 
             float distance = (sgn.x != 0) ? d.x : ((sgn.y != 0) ? d.y : d.z);
             vec3 normal = sgn;
@@ -536,12 +541,74 @@ void EngineReload(engine_t* ioEngine)
 
                 // bounds intersection
                 color = (vec4(rd, 1.0));
+
                 if (hit)
                 {
                     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
-                    vec3 hitp = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
-                    color.xyz = texture(iChunk, hitp).xxx;
+                    vec3 puvw = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
+                    vec3 pvoxel = puvw * iChunkExtent;
+
+                    color.xyz = vec3(distance*0.5);//texture(iChunk, puvw).xxx;
                 }
+#else
+
+                vec3 stepSign = sign(rd);
+                vec3 vsro = ro * iChunkExtent;
+                vec3 p = floor(vsro);
+
+                vec3 manh = stepSign * (vec3(0.5) - fract(vsro)) + 0.5;
+                //vec3 manh = mix(fract(vsro), 1.0 - fract(vsro), stepSign * 0.5 + 0.5);
+                vec3 compv = (stepSign * 0.5 + vec3(0.5));
+
+                vec3 tDelta = 1.f / abs(rd);
+                vec3 tMax = manh * tDelta;
+                vec3 uvwstep = stepSign / iChunkExtent;
+                vec3 puvw = (p + vec3(0.5))  / iChunkExtent;
+
+                //color.xyz = tMax;
+
+#if 1
+float accum = 0.f;
+while( (puvw.x * stepSign.x < compv.x)
+        && (puvw.y * stepSign.y < compv.y)
+        && (puvw.z * stepSign.z < compv.z))
+{
+
+accum += texture(iChunk, puvw).x / 3.f;
+
+if (tMax.x < tMax.y)
+{
+    if (tMax.x < tMax.z)
+    {
+        puvw.x += uvwstep.x;
+        tMax.x += tDelta.x;
+    }
+    else
+    {
+        puvw.z += uvwstep.z;
+        tMax.z += tDelta.z;
+    }
+}
+else
+{
+    if (tMax.y < tMax.z)
+    {
+        puvw.y += uvwstep.y;
+        tMax.y += tDelta.y;
+    }
+    else
+    {
+        puvw.z += uvwstep.z;
+        tMax.z += tDelta.z;
+    }
+}
+
+}
+
+                color.xyz = vec3(accum);//puvw * 0.5;// + vec3(0.5);
+#endif
+
+#endif
             }
 
         )__lstr__" };
@@ -751,12 +818,12 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
 
         numtk::Vec4_t camforward = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, -1.f, 0.f});
         numtk::Vec4_t camup = numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 1.f, 0.f, 0.f });
-        numtk::Vec3_t campos = numtk::vec3_add(ioEngine->player_position, { 0.f, 1.7f, 0.f });
+        ioEngine->campos = numtk::vec3_add(ioEngine->player_position, { 0.f, 1.7f, 0.f });
 
         numtk::Mat4_t viewmat = numtk::mat4_view(
             numtk::vec3_from_vec4(camforward),
             numtk::vec3_from_vec4(camup),
-            campos
+            ioEngine->campos
         );
 
         numtk::Mat4_t invviewmat = numtk::mat4_viewinv(
@@ -781,7 +848,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
         {
             numtk::Vec3_t rd = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::Vec4_t{ 0.f, 0.f, 1.f, 0.f }));
 
-            numtk::Vec3_t p = campos;
+            numtk::Vec3_t p = ioEngine->campos;
             quick_vdb::Position_t vp = WS_to_VS(p);
             p = WS_to_VS_float(p);
 
@@ -796,7 +863,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             numtk::Vec3_t invrd = numtk::Vec3_t{ 1.f/rd[0], 1.f/rd[1], 1.f/rd[2] };
             for(;;)
             {
-                if (numtk::vec3_norm(numtk::vec3_sub(VS_to_WS_float(p), campos)) > 5.f)
+                if (numtk::vec3_norm(numtk::vec3_sub(VS_to_WS_float(p), ioEngine->campos)) > 5.f)
                     break;
                 if (ioEngine->vdb.get(vp)) {
                     //std::cout << "Looking at " << vp[0] << " " << vp[1] << " " << vp[2] << std::endl;
@@ -890,22 +957,20 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
     if (kFragmentPipeline) // compute shader pipeline
     {
 
-        numtk::Vec3i64_t player_chunk_base = ioEngine->vdb.GetChildBase<0>(
-            WS_to_VS(ioEngine->player_position));
-        if (player_chunk_base != ioEngine->player_chunk_base)
+        numtk::Vec3i64_t voxelp = WS_to_VS(ioEngine->campos);
+        numtk::Vec3i64_t campos_chunk_base = ioEngine->vdb.GetChildBase<0>(voxelp);
+        if (campos_chunk_base != ioEngine->campos_chunk_base)
         {
             Timer<Info> timer0("UploadChunk");
             std::cout << "Entered new chunk" << std::endl;
 
             std::size_t size = 0u;
             std::uint64_t const* buffer = nullptr;
-            numtk::Vec3i64_t voxelp = WS_to_VS(ioEngine->player_position);
             ioEngine->vdb.GetLeafPointer(voxelp, &size, &buffer);
 
+            bool unmap_successful = false;
             if (size != -1ull)
             {
-                bool unmap_successful = false;
-
                 if (size == 0)
                 {
                     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, ioEngine->staging_buffer);
@@ -913,7 +978,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
                                                                       GL_WRITE_ONLY);
 
                     bool value = (bool)buffer;
-                    std::memset(dest, value ? 0xff : 0, size * 64);
+                    std::memset(dest, value ? 0xff : 0, 1u << (engine_t::kLog2ChunkSize * 3u));
 
                     unmap_successful = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
                     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
@@ -955,13 +1020,24 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
                 glBindTexture(GL_TEXTURE_3D, 0u);
                 glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
             }
+            else
+            {
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, ioEngine->staging_buffer);
+                unsigned char* dest = (unsigned char*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER,
+                                                                  GL_WRITE_ONLY);
+
+                std::memset(dest, 0, size * 64);
+
+                unmap_successful = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0u);
+            }
 
             GLenum error_code = glGetError();
             if (error_code != GL_NO_ERROR)
                 std::cout << "woah there" << std::endl;
 
 
-            ioEngine->player_chunk_base = player_chunk_base;
+            ioEngine->campos_chunk_base = campos_chunk_base;
         }
 
         glMakeTextureHandleResidentARB(ioEngine->chunk_handle);
@@ -984,13 +1060,33 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             if (resolution_loc >= 0)
                 glUniform2fv(resolution_loc, 1, resolution);
 
-            numtk::Vec3_t const eye_position = ioEngine->player_position;
-            numtk::Vec3_t const chunklocal = WS_to_VS_float(eye_position);
-            //ComputeChunkLocalCoordinates(eye_position);
-            //std::cout << "Chunk local " << chunklocal[0] << " " << chunklocal[1] << " " << chunklocal[2] << std::endl;
+            numtk::Vec3_t const eye_position = ioEngine->campos;
+            numtk::Vec3i64_t const chunk_base =
+                ioEngine->vdb.GetChildBase<0>(WS_to_VS(eye_position));
+
+            numtk::Vec3_t const ws = VS_to_WS(chunk_base);
+            numtk::Vec3_t const chunklocal_ws = numtk::vec3_sub(eye_position, ws);
+
+            numtk::Vec3_t const vs = WS_to_VS_float(eye_position);
+            numtk::Vec3_t const fchunk_base{
+                (float)chunk_base[0],
+                (float)chunk_base[1],
+                (float)chunk_base[2]
+            };
+            numtk::Vec3_t const chunklocal_vs = numtk::vec3_sub(vs, fchunk_base);
+
+            numtk::Vec3_t const chunklocal_relative = numtk::vec3_float_mul(
+                chunklocal_vs, 1.f / (float)engine_t::kChunkSize);
+
+//std::cout << "chunk local " << chunklocal_relative[0] << " " << chunklocal_relative[1] << " " << chunklocal_relative[2] << std::endl;
+
+            int const chunkExtent_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkExtent");
+            if (chunkExtent_loc >= 0)
+                glUniform1f(chunkExtent_loc, (float)engine_t::kChunkSize);
+
             int const chunkLocalCamPos_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkLocalCamPos");
             if (chunkLocalCamPos_loc >= 0)
-                glUniform3fv(chunkLocalCamPos_loc, 1, &chunklocal[0]);
+                glUniform3fv(chunkLocalCamPos_loc, 1, &chunklocal_relative[0]);
 
             int const chunk_loc = glGetUniformLocation(ioEngine->shader_program, "iChunk");
             if (chunk_loc >= 0)

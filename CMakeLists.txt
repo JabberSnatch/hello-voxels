@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.11 FATAL_ERROR)
 
 project(explorer)
 
-option(GL_DEBUG_CONTEXT "Create OpenGL debug context" OFF)
+option(ENABLE_GL_DEBUG_CONTEXT "Create OpenGL debug context" OFF)
 
 set(SOURCE_DIR src)
 set(LIB_DIR ${CMAKE_CURRENT_LIST_DIR}/../lib)
@@ -38,6 +38,8 @@ target_link_libraries(explorer
 )
 
 if (ENABLE_GL_DEBUG_CONTEXT)
+  add_compile_definitions(ENABLE_GL_DEBUG_CONTEXT)
+
   target_link_libraries(explorer
 	PRIVATE
 		oglbase

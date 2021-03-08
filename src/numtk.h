@@ -57,6 +57,12 @@ vec3i64_add(Vec3i64_t const& _lhs, Vec3i64_t const& _rhs)
 }
 
 inline Vec3i64_t
+vec3i64_sub(Vec3i64_t const& _lhs, Vec3i64_t const& _rhs)
+{
+    return Vec3i64_t{ _lhs[0]-_rhs[0], _lhs[1]-_rhs[1], _lhs[2]-_rhs[2] };
+}
+
+inline Vec3i64_t
 vec3i64_int_mul(Vec3i64_t const& _lhs, std::int64_t _rhs)
 {
     return Vec3i64_t{ _lhs[0]*_rhs, _lhs[1]*_rhs, _lhs[2]*_rhs };

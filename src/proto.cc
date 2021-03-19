@@ -64,7 +64,7 @@ struct engine_t
 
     static constexpr unsigned kLog2ChunkSize = 6u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 0;
+    static constexpr int kChunkLoadRadius = 1;
     static constexpr float kVoxelScale = .25f;
     using VDB_t = quick_vdb::RootNode< quick_vdb::BranchNode< quick_vdb::BranchNode<
                   quick_vdb::LeafNode<kLog2ChunkSize>, 4u>, 4u>>;
@@ -721,7 +721,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             {
                 d = numtk::vec3_normalise(d);
 
-                static constexpr float kLineSpeed = 5.0f;
+                static constexpr float kLineSpeed = 50.0f;
                 numtk::Vec3_t dp = d;
                 numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
                 numtk::Vec3_t wsdp = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::vec3_float_concat(dp, 0.f)));
@@ -1025,16 +1025,8 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             ioEngine->campos_chunk_index = campos_chunk_index;
         }
 
-        int const camchunk_index = engine_t::kChunkLoadIndex(
-            numtk::vec3i64_add(
-                numtk::vec3i64_sub(campos_chunk_index, ioEngine->campos_chunk_index),
-                { engine_t::kChunkLoadRadius, engine_t::kChunkLoadRadius, engine_t::kChunkLoadRadius }
-            ));
-
-        engine_t::ChunkResources const& camchunk = ioEngine->chunks[camchunk_index];
-        glMakeTextureHandleResidentARB(camchunk.handle);
-
         glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);
+
 
         glUseProgram(ioEngine->shader_program);
         {
@@ -1051,24 +1043,37 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             if (resolution_loc >= 0)
                 glUniform2fv(resolution_loc, 1, resolution);
 
+            int const chunkExtent_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkExtent");
+            if (chunkExtent_loc >= 0)
+                glUniform1f(chunkExtent_loc, (float)engine_t::kChunkSize);
+        }
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
+
+        static GLfloat const clear_color[]{ 0.5f, 0.5f, 0.5f, 1.f };
+        glClearBufferfv(GL_COLOR, 0, clear_color);
+        static GLfloat const clear_depth = 1.f;
+        glClearBufferfv(GL_DEPTH, 0, &clear_depth);
+
+        for (int chunkIndex = 0u; chunkIndex < engine_t::kChunkLoadCount; ++chunkIndex)
+        {
+            engine_t::ChunkResources const& chunk = ioEngine->chunks[chunkIndex];
+            glMakeTextureHandleResidentARB(chunk.handle);
+
             numtk::Vec3_t const eye_position = ioEngine->campos();
-            numtk::Vec3i64_t const chunk_base =
-                ioEngine->vdb.GetChildBase<0>(WS_to_VS(eye_position));
 
             numtk::Vec3_t const vs = WS_to_VS_float(eye_position);
             numtk::Vec3_t const fchunk_base{
-                (float)chunk_base[0],
-                (float)chunk_base[1],
-                (float)chunk_base[2]
+                (float)chunk.base[0],
+                (float)chunk.base[1],
+                (float)chunk.base[2]
             };
             numtk::Vec3_t const chunklocal_vs = numtk::vec3_sub(vs, fchunk_base);
 
             numtk::Vec3_t const chunklocal_relative = numtk::vec3_float_mul(
                 chunklocal_vs, 1.f / (float)engine_t::kChunkSize);
-
-            int const chunkExtent_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkExtent");
-            if (chunkExtent_loc >= 0)
-                glUniform1f(chunkExtent_loc, (float)engine_t::kChunkSize);
 
             int const chunkLocalCamPos_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkLocalCamPos");
             if (chunkLocalCamPos_loc >= 0)
@@ -1076,15 +1081,16 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
 
             int const chunk_loc = glGetUniformLocation(ioEngine->shader_program, "iChunk");
             if (chunk_loc >= 0)
-                glUniformHandleui64ARB(chunk_loc, camchunk.handle);
+                glUniformHandleui64ARB(chunk_loc, chunk.handle);
+
+            glBindVertexArray(ioEngine->vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0u);
+
+            glMakeTextureHandleNonResidentARB(chunk.handle);
         }
 
-        glBindVertexArray(ioEngine->vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0u);
-
         glUseProgram(0u);
-        glMakeTextureHandleNonResidentARB(camchunk.handle);
     }
 }
 
@@ -1138,7 +1144,11 @@ oglbase::ShaderSources_t const rtfrag{ "#version 430 core\n", R"__lstr__(
                 vec3 rd = raydir_frommat(iInvProj, clip_coord);
                 vec3 ro = iChunkLocalCamPos;// - vec3(0.5);
 
-#if 0
+#if 1
+                if (ro.x < 0.0 || ro.x > 1.0
+                    || ro.y < 0.0 || ro.y > 1.0
+                    || ro.z < 0.0 || ro.z > 1.0)
+                {
                 ro = iChunkLocalCamPos - vec3(0.5);
 
                 float winding = (maxc(abs(ro) * 2.0) < 1.0) ? -1.0 : 1.0;
@@ -1163,17 +1173,30 @@ oglbase::ShaderSources_t const rtfrag{ "#version 430 core\n", R"__lstr__(
             bool hit = (sgn.x != 0) || (sgn.y != 0) || (sgn.z != 0);
 
                 // bounds intersection
-                color = (vec4(rd, 1.0));
+                //color = (vec4(rd, 1.0));
 
                 if (hit)
                 {
-                    color = vec4(normal * 0.5 + vec3(0.5), 1.0);
-                    vec3 puvw = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
-                    vec3 pvoxel = puvw * iChunkExtent;
+                    //color = vec4(normal * 0.5 + vec3(0.5), 1.0);
+                    //vec3 puvw = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
+                    //vec3 pvoxel = puvw * iChunkExtent;
 
-                    color.xyz = vec3(distance*0.5);//texture(iChunk, puvw).xxx;
+                    //gl_FragDepth = distance / 1000.f;
+                    //color.xyz = puvw;////vec3(distance*0.5);//texture(iChunk, puvw).xxx;
+                    ro = (ro + rd * distance * 1.0001) + vec3(0.5);
                 }
-#else
+else
+{
+discard;
+}
+                }
+else
+{
+//discard;
+}
+#endif
+
+#if 1
 
                 vec3 stepSign = sign(rd);
                 vec3 vsro = ro * iChunkExtent;
@@ -1238,10 +1261,17 @@ else
 
                 }
 
-                color.xyz = vec3(puvw * (0.1 / distance(puvw,start)));
+if (accum.x >= 1.0)
+{
+                color.xyz = mix(vec3(0.5), vec3(puvw * (0.1 / distance(puvw,start))), accum.x);
                     //distance(puvw, start));//puvw * 0.5;// + vec3(0.5);
+                gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
+}
+else
+{
+discard;
+}
 #endif
-
 #endif
             }
 

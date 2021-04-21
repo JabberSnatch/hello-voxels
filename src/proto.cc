@@ -36,9 +36,21 @@
 
 constexpr bool kFragmentPipeline = true;
 
-extern oglbase::ShaderSources_t const rtfrag;
 extern oglbase::ShaderSources_t const rtvert;
+extern oglbase::ShaderSources_t const rtfrag;
 
+extern oglbase::ShaderSources_t const skytrfrag;
+
+struct atmosphere_t
+{
+    numtk::Vec3_t sun_irradiance;
+    float sun_angular_radius;
+    numtk::Vec2_t bounds;
+    numtk::Vec4_t rscat;
+    numtk::Vec4_t mext;
+    float odensity[4];
+    numtk::Vec4_t oext;
+};
 
 struct engine_t
 {
@@ -114,6 +126,7 @@ void UploadChunk(engine_t::ChunkResources& ioResources,
                  engine_t::VDB_t& vdb,
                  oglbase::BufferPtr const& staging_buffer);
 
+void ComputeClearSky();
 
 numtk::Vec3i64_t ComputeChunkIndex(numtk::Vec3i64_t const& _p)
 {
@@ -386,6 +399,14 @@ void UploadChunk(engine_t::ChunkResources& ioResources, engine_t::VDB_t& vdb, og
         std::cout << "OpenGL error detected" << std::endl;
 }
 
+void ComputeClearSky()
+{
+    // transmittance
+    // direct irradiance
+    // rayleigh + mie single scattering
+    // rayleigh + mie multiple scattering
+}
+
 extern "C"
 {
 
@@ -407,6 +428,110 @@ void EngineReload(engine_t* ioEngine)
     ioEngine->generated_chunks.clear();
     for (engine_t::ChunkResources& chunk : ioEngine->chunks)
         chunk.base = { engine_t::kInvalidChunkIndex };
+
+    {
+        constexpr int kTrTexWidth = 256;
+        constexpr int kTrTexHeight = 64;
+
+        oglbase::TexturePtr trtex{};
+        glCreateTextures(GL_TEXTURE_2D, 1, trtex.get());
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, trtex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kTrTexWidth, kTrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        oglbase::FBOPtr fbo{};
+        glGenFramebuffers(1, fbo.get());
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, trtex, 0);
+
+        GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+        if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+            std::cout << "Framebuffer status error : " << fboCheck << std::endl;
+
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+
+        std::string log{};
+        oglbase::ShaderPtr vbin = oglbase::CompileShader(GL_VERTEX_SHADER, rtvert, &log);
+        std::cout << "Vshader " << log << std::endl;
+        oglbase::ShaderPtr skytrbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skytrfrag, &log);
+        std::cout << "skytr " << log << std::endl;
+        oglbase::ProgramPtr skytrprog = oglbase::LinkProgram({ skytrbin, vbin }, &log);
+        std::cout << "skytrprog " << log << std::endl;
+
+        oglbase::VAOPtr vao{};
+        glGenVertexArrays(1, vao.get());
+
+        numtk::Vec2_t resolution{(float)kTrTexWidth, (float)kTrTexHeight};
+        oglbase::BufferPtr viewportBuffer{};
+        glCreateBuffers(1, viewportBuffer.get());
+        glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+        glBufferData(GL_UNIFORM_BUFFER,
+                     2 * sizeof(float),
+                     &resolution[0],
+                     GL_STATIC_DRAW);
+
+        numtk::Vec3_t lambda{ 610.e-3f, 550.e-3f, 450.e-3f };
+
+        numtk::Vec3_t la0{ std::pow(lambda[0], -4.f),
+            std::pow(lambda[1], -4.f),
+            std::pow(lambda[2], -4.f)
+        };
+        numtk::Vec3_t lar = numtk::vec3_float_mul(la0, 1.24062e-6f);
+        numtk::Vec4_t rscat{ lar[0], lar[1], lar[2], -1.f / 8.e3f };
+
+        //kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha);
+        float mie = 5.328e-3f / 1.2e3f;
+        numtk::Vec4_t mext{ .9f * mie, .9f * mie, .9f * mie, -1.f / 1.2e3f };
+
+        float ozone = 300.f * 2.687e20f / 1.5e4f;
+        numtk::Vec4_t oext{ 4.228e-26f * ozone, 4.305e25f * ozone, 2.316e-26f * ozone, 2.5e4f };
+
+        atmosphere_t atmosphere{
+            { 1.f, 1.f, 1.f },//numtk::Vec3_t sun_irradiance;
+            .00935f * .5f,//float sun_angular_radius;
+            { 6.36e6f, 6.42e6f },//numtk::Vec2_t bounds;
+            rscat, mext,
+            { 1.f / 1.5e4f, -2.f / 3.f, -1.f / 1.5e4f, 8.f / 3.f },//float odensity[4];
+            oext
+        };
+
+        oglbase::BufferPtr atmosphereBuffer{};
+        glCreateBuffers(1, atmosphereBuffer.get());
+
+        glBindBuffer(GL_UNIFORM_BUFFER, atmosphereBuffer);
+        glBufferData(GL_UNIFORM_BUFFER,
+                     sizeof(atmosphere_t),
+                     &atmosphere,
+                     GL_STATIC_DRAW);
+
+        glBindBuffer(GL_UNIFORM_BUFFER, 0u);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+
+        glViewport(0, 0, kTrTexWidth, kTrTexHeight);
+
+        glUseProgram(skytrprog);
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+        glUniformBlockBinding(skytrprog, 0u, 0u);
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+        glUniformBlockBinding(skytrprog, 1u, 1u);
+
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0u);
+
+        glUseProgram(0u);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0u);
+    }
 
     if (kFragmentPipeline)
     {
@@ -451,6 +576,7 @@ void EngineReload(engine_t* ioEngine)
                                1u << engine_t::kLog2ChunkSize);
 
             chunk.handle = glGetTextureSamplerHandleARB(chunk.texture, ioEngine->sampler);
+            glMakeTextureHandleResidentARB(chunk.handle);
         }
 
         ioEngine->chunk_texture.reset(0u);
@@ -611,15 +737,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
                 ioEngine->player_position = numtk::vec3_add(ioEngine->player_position, wsdp);
             }
-
-            // Put voxel
-#if 0
-            if (iInput->key_down[' '])
-            {
-                quick_vdb::Position_t voxel{ ioEngine->look_at_voxel[0], ioEngine->look_at_voxel[1] + 1, ioEngine->look_at_voxel[2] };
-                ioEngine->vdb.set(voxel);
-            }
-#endif
         }
 
         if (!ioEngine->noclip_mode)
@@ -859,7 +976,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
         glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);
 
-
         glUseProgram(ioEngine->shader_program);
         {
             int const projmat_loc = glGetUniformLocation(ioEngine->shader_program, "iInvProj");
@@ -957,7 +1073,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
         for (int chunkIndex = 0u; chunkIndex < engine_t::kChunkLoadCount; ++chunkIndex)
         {
             engine_t::ChunkResources const& chunk = ioEngine->chunks[chunkIndex];
-            glMakeTextureHandleResidentARB(chunk.handle);
+            //glMakeTextureHandleResidentARB(chunk.handle);
 
             numtk::Vec3_t const eye_position = ioEngine->campos();
 
@@ -984,7 +1100,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0u);
 
-            glMakeTextureHandleNonResidentARB(chunk.handle);
+            //glMakeTextureHandleNonResidentARB(chunk.handle);
         }
 
         glUseProgram(0u);
@@ -993,6 +1109,71 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
 
 }
+
+/*
+
+ts : standard time decimal hours
+SM : standard meridian (radians)
+L : longitude (radians)
+J : julian date (integer in [1, 365])
+
+t : solar time decimal hours
+t = ts + 0.170*sin(4*pi*(J - 80) / 373) - 0.129*sin(2*pi*(J - 8) / 355) + 12 * (SM - L) / pi
+
+delta : solar declination angle
+delta = 0.4093 * sin(2*pi*(J-81)/368)
+
+thetaS : solar angle from zenith
+thetaS = pi/2 - arcsin(sin(lat)*sin(delta) - cos(lat)*cos(delta)*cos(pi*t/12))
+
+phiS : solar azimuth
+phiS = arctan((-cos(delta) * sin(pi*t/12)) / (cos(lat)*sin(delta) - sin(lat)*cos(delta)*cos(pi*t/12)))
+
+
+lambda, K, S0, S1, S2, SunRad, ko, kwa, kg
+380, 0.650, 63.4, 38.5, 3, 16559.0, /, /, /
+390, 0.653, 65.8, 35, 1.2, 16233.7, /, /, /
+400, 0.656, 94.8, 43.4, -1.1, 21127.5, /, /, /
+410, 0.658, 104.8, 46.3, -0.5, 25888.2, /, /, /
+420, 0.661, 105.9, 43.9, -0.7, 25829.1, /, /, /
+430, 0.662, 96.8, 37.1, -1.2, 24232.3, /, /, /
+440, 0.663, 113.9, 36.7, -2.6, 26760.5, /, /, /
+450, 0.666, 125.6, 35.9, -2.9, 29658.3, 0.3, /, /
+460, 0.667, 125.5, 32.6, -2.8, 30545.4, 0.6, /, /
+470, 0.669, 121.3, 27.9, -2.6, 30057.5, 0.9, /, /
+480, 0.670, 121.3, 24.3, -2.6, 30663.7, 1.4, /, /
+490, 0.671, 113.5, 20.1, -1.8, 28830.4, 2.1, /, /
+500, 0.672, 113.1, 16.2, -1.5, 28712.1, 3.0, /, /
+510, 0.673, 110.8, 13.2, -1.3, 27835.0, 4.0, /, /
+520, 0.674, 106.5, 8.6, -1.2, 27100.6, 4.8, /, /
+530, 0.676, 108.8, 6.1, -1, 27233.6, 6.3, /, /
+540, 0.677, 105.3, 4.2, -0.5, 26361.3, 7.5, /, /
+550, 0.678, 104.4, 1.9, -0.3, 25503.8, 8.5, /, /
+560, 0.679, 100, 0, 0, 25060.2, 10.3, /, /
+570, 0.679, 96, -1.6, 0.2, 25311.6, 12, /, /
+580, 0.680, 95.1, -3.5, 0.5, 25355.9, 12, /, /
+590, 0.681, 89.1, -3.5, 2.1, 25134.2, 11.5, /, /
+600, 0.682, 90.5, -5.8, 3.2, 24631.5, 12.5, /, /
+610, 0.682, 90.3, -7.2, 4.1, 24173.2, 12, /, /
+620, 0.683, 88.4, -8.6, 4.7, 23685.3, 10.5, /, /
+630, 0.684, 84, -9.5, 5.1, 23212.1, 9, /, /
+640, 0.684, 85.1, -10.9, 6.7, 22827.7, 7.9, /, /
+650, 0.685, 81.9, -10.7, 7.3, 22339.8, 6.7, /, /
+660, 0.685, 82.6, -12, 8.6, 21970.2, 5.7, /, /
+670, 0.685, 84.9, -14, 9.8, 21526.7, 4.8, /, /
+680, 0.686, 81.3, -13.6, 10.2, 21097.9, 3.6, /, /
+690, 0.686, 71.9, -12, 8.3, 20728.3, 2.8, 1.6, /
+700, 0.687, 74.3, -13.3, 9.6, 20240.4, 2.3, 2.4, /
+710, 0.687, 76.4, -12.9, 8.5, 19870.8, 1.8, 1.25, /
+720, 0.688, 63.3, -10.6, 7, 19427.2, 1.4, 100, /
+730, 0.688, 71.7, -11.6, 7.6, 19072.4, 1.1, 87, /
+740, 0.689, 77, -12.2, 8, 18628.9, 1, 6.1, /
+750, 0.689, 65.2, -10.2, 6.7, 18259.2, 0.9, 0.1, /
+760, 0.689, 47.7, -7.8, 5.2, /, 0.7, 1e-03, 3.0,
+770, 0.689, 68.6, -11.2, 7.4, /, 0.4, 1e-03, 0.21
+780, 0.689, 65, -10.4, 6.8, /, /, 0.06, /
+
+ */
 
 
 oglbase::ShaderSources_t const rtvert{ "#version 430 core\n", R"__lstr__(
@@ -1010,4 +1191,9 @@ oglbase::ShaderSources_t const rtvert{ "#version 430 core\n", R"__lstr__(
 
 oglbase::ShaderSources_t const rtfrag{
     #include "voxeltraversal.frag.glsl"
+};
+
+oglbase::ShaderSources_t const skytrfrag{
+    #include "transmittance.frag.glsl"
+
 };

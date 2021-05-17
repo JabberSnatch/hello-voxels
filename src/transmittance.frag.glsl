@@ -4,7 +4,7 @@ R"__lstr__(
 
 layout(location = 0) out vec3 transmittance;
 
-layout(binding = 0) uniform ViewportBlock
+layout(std140, binding = 0) uniform ViewportBlock
 {
     vec2 resolution;
 } viewport;
@@ -16,7 +16,7 @@ struct LinearLayer
     float constant;
 };
 
-layout(binding = 1) uniform AtmosphereBlock
+layout(std140, binding = 1) uniform AtmosphereBlock
 {
     vec3 sun_irradiance;
     float sun_angular_radius;
@@ -98,7 +98,7 @@ vec2 TransmittanceUVtoRMu(vec2 radius_bounds, vec2 uv)
 void main() {
     vec2 uv = vec2(gl_FragCoord) / viewport.resolution;
     vec2 rmu = TransmittanceUVtoRMu(atmos.bounds, uv);
-    transmittance = vec3(uv, 0.0);//Transmittance(rmu.x, rmu.y);
+    transmittance = vec3(rmu.xy, 0.0);//Transmittance(rmu.x, rmu.y);
 }
 
 )__lstr__"

@@ -519,11 +519,13 @@ void EngineReload(engine_t* ioEngine)
 
         glUseProgram(skytrprog);
 
+        //GLuint index = glGetUniformBlockIndex(skytrprog, "ViewportBlock");
+        //glUniformBlockBinding(skytrprog, index, 0u);
         glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
-        glUniformBlockBinding(skytrprog, 0u, 0u);
 
+        //index = glGetUniformBlockIndex(skytrprog, "AtmosphereBlock");
+        //glUniformBlockBinding(skytrprog, index, 1u);
         glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
-        glUniformBlockBinding(skytrprog, 1u, 1u);
 
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);

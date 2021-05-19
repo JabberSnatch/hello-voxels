@@ -14,6 +14,7 @@ struct LinearLayer
 {
     float linear;
     float constant;
+    vec2 padding;
 };
 
 layout(std140, binding = 1) uniform AtmosphereBlock
@@ -22,6 +23,7 @@ layout(std140, binding = 1) uniform AtmosphereBlock
     float sun_angular_radius;
 
     vec2 bounds;
+    vec2 padding;
 
     vec4 rscat; // rgb + expo_scale
     vec4 mext; // rgb + expo_scale
@@ -75,30 +77,31 @@ vec3 Transmittance(float r, float mu)
 {
     vec3 rayleigh_term = atmos.rscat.xyz * OpticalLengthExpo(atmos.rscat.w, r, mu);
     vec3 mie_term = atmos.mext.xyz * OpticalLengthExpo(atmos.mext.w, r, mu);
-    vec3 absorp_term = atmos.oext.xyz * OpticalLengthLinear(atmos.odensity, atmos.oext.w, r, mu);
+    vec3 absorp_term = max(atmos.oext.xyz * OpticalLengthLinear(atmos.odensity, atmos.oext.w, r, mu), 0.0);
     return exp(-(rayleigh_term + mie_term + absorp_term));
 }
 
 vec2 TransmittanceUVtoRMu(vec2 radius_bounds, vec2 uv)
 {
-    vec2 uvsqr = radius_bounds * radius_bounds;
-    float H = sqrt(uvsqr[1] - uvsqr[0]);
+    vec2 boundssqr = radius_bounds * radius_bounds;
+    float Hsqr = boundssqr[1] - boundssqr[0];
+    float H = sqrt(Hsqr);
     float rho = H * uv[1];
-    float rhosqr = rho * rho;
-    float r = sqrt(rhosqr + uvsqr[0]);
+    float rhosqr = rho*rho;
+    float r = sqrt(rhosqr + boundssqr[0]);
     float d_min = radius_bounds[1] - r;
     float d_max = rho + H;
     float d = d_min + uv[0] * (d_max - d_min);
     float mu = (abs(d) < 0.0001)
         ? 1.0
-        : clamp((uvsqr[1]-uvsqr[0] - rhosqr - d*d) / (2.0 * r * d), -1.0, 1.0);
+        : clamp((Hsqr - rhosqr - d*d) / (2.0 * r * d), -1.0, 1.0);
     return vec2(r, mu);
 }
 
 void main() {
     vec2 uv = vec2(gl_FragCoord) / viewport.resolution;
     vec2 rmu = TransmittanceUVtoRMu(atmos.bounds, uv);
-    transmittance = vec3(rmu.xy, 0.0);//Transmittance(rmu.x, rmu.y);
+    transmittance = Transmittance(rmu.x, rmu.y);
 }
 
 )__lstr__"

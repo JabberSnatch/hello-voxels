@@ -46,9 +46,10 @@ struct atmosphere_t
     numtk::Vec3_t sun_irradiance;
     float sun_angular_radius;
     numtk::Vec2_t bounds;
+    numtk::Vec2_t padding;
     numtk::Vec4_t rscat;
     numtk::Vec4_t mext;
-    float odensity[4];
+    float odensity[8];
     numtk::Vec4_t oext;
 };
 
@@ -488,16 +489,18 @@ void EngineReload(engine_t* ioEngine)
         //kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha);
         float mie = 5.328e-3f / 1.2e3f;
         numtk::Vec4_t mext{ .9f * mie, .9f * mie, .9f * mie, -1.f / 1.2e3f };
+        std::cout << "mie ext " << mext[0] << " " << mext[1] << " " << mext[2] << std::endl;
 
         float ozone = 300.f * 2.687e20f / 1.5e4f;
-        numtk::Vec4_t oext{ 4.228e-26f * ozone, 4.305e25f * ozone, 2.316e-26f * ozone, 2.5e4f };
+        numtk::Vec4_t oext{ 4.228e-26f * ozone, 4.305e-25f * ozone, 2.316e-26f * ozone, 2.5e4f };
 
         atmosphere_t atmosphere{
             { 1.f, 1.f, 1.f },//numtk::Vec3_t sun_irradiance;
             .00935f * .5f,//float sun_angular_radius;
             { 6.36e6f, 6.42e6f },//numtk::Vec2_t bounds;
+            numtk::Vec2_t{},
             rscat, mext,
-            { 1.f / 1.5e4f, -2.f / 3.f, -1.f / 1.5e4f, 8.f / 3.f },//float odensity[4];
+            { 1.f / 1.5e4f, -2.f / 3.f, 0.f, 0.f, -1.f / 1.5e4f, 8.f / 3.f, 0.f, 0.f },//float odensity[4];
             oext
         };
 

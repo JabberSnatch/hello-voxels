@@ -84,6 +84,9 @@ struct engine_t
     oglbase::BufferPtr staging_buffer{};
     oglbase::SamplerPtr sampler{};
 
+    oglbase::BufferPtr sh_buffer{};
+    numtk::SH2nd_t sh_data[3];
+
     oglbase::TexturePtr chunk_texture{};
     GLuint64 chunk_handle{};
 
@@ -430,11 +433,9 @@ void EngineReload(engine_t* ioEngine)
             {0.f, 0.f, 1.f}
         };
 
-        // f(w) = Csun * (max(0.0, dot(w, Lsun) - 0.5) * 2.0) + Csky * max(0.0, w.y)
-
-        static const numtk::Vec3_t Lsun = numtk::vec3_normalise({ -.1f, 1.f, .4f });
-        static const numtk::Vec3_t Csun{ .9f, .8f, .6f };
-        static const numtk::Vec3_t Csky{ .2f, .35f, .7f };
+        static const numtk::Vec3_t Lsun = numtk::vec3_normalise({ -.1f, .5f, .4f });
+        static const numtk::Vec3_t Csun{ .9f, .8f, .4f };
+        static const numtk::Vec3_t Csky = numtk::vec3_float_mul({ .2f, .35f, .7f }, 0.2f);
 
         numtk::Vec3_t Li[6];
 
@@ -466,6 +467,20 @@ void EngineReload(engine_t* ioEngine)
             sh_reduced[2] = numtk::sh2nd_add(sh_reduced[2],
                                              numtk::sh2nd_float_mul(wsh, fw[2] * weight));
         }
+
+        ioEngine->sh_data[0] = sh_reduced[0];
+        ioEngine->sh_data[1] = sh_reduced[1];
+        ioEngine->sh_data[2] = sh_reduced[2];
+
+        glCreateBuffers(1, ioEngine->sh_buffer.get());
+
+        glBindBuffer(GL_UNIFORM_BUFFER, ioEngine->sh_buffer);
+        glBufferData(GL_UNIFORM_BUFFER,
+                     sizeof(numtk::SH2nd_t) * 3,
+                     &sh_reduced[0],
+                     GL_STATIC_DRAW);
+
+        glBindBuffer(GL_UNIFORM_BUFFER, 0u);
     }
 }
 
@@ -837,6 +852,17 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             int const chunkExtent_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkExtent");
             if (chunkExtent_loc >= 0)
                 glUniform1f(chunkExtent_loc, (float)engine_t::kChunkSize);
+        }
+
+        {
+            int loc;
+            loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_red");
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[0]);
+            loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_green");
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[1]);
+            loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_blue");
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[2]);
+
         }
 
         glEnable(GL_DEPTH_TEST);

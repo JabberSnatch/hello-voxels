@@ -22,7 +22,49 @@ layout(bindless_sampler) uniform sampler3D iChunk;
 uniform float iChunkExtent;
 uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
 
+uniform float iSHBuffer_red[9];
+uniform float iSHBuffer_green[9];
+uniform float iSHBuffer_blue[9];
+
+#if 0
+layout(std140, binding = 0) uniform SHBlock
+{
+    float r[9];
+    float g[9];
+    float b[9];
+} iSHBuffer;
+#endif
+
 layout(location = 0) out vec4 color;
+
+void sh_second_order(vec3 w, out float v[9])
+{
+    const float kPi = 3.1415926535f;
+    const float kInvPi = 1.f / kPi;
+
+    v[0] = .5 * sqrt(kInvPi);
+    v[1] = w[1] * sqrt(.75f * kInvPi);
+    v[2] = w[2] * sqrt(.75f * kInvPi);
+    v[3] = w[0] * sqrt(.75f * kInvPi);
+    v[4] = .5f * w[0]*w[2] * sqrt(15.f * kInvPi);
+    v[5] = .5f * w[2]*w[1] * sqrt(15.f * kInvPi);
+    v[6] = .25f * (-w[0]*w[0] - w[2]*w[2] + 2.f*w[1]*w[1]) * sqrt(5.f * kInvPi);
+    v[7] = .5f * w[0]*w[1] * sqrt(15.f * kInvPi);
+    v[8] = .25f * (w[0]*w[0] - w[2]*w[2]) * sqrt(15.f * kInvPi);
+}
+
+float sh_dot(float lhs[9], float rhs[9])
+{
+    return lhs[0] * rhs[0] +
+        lhs[1] * rhs[1] +
+        lhs[2] * rhs[2] +
+        lhs[3] * rhs[3] +
+        lhs[4] * rhs[4] +
+        lhs[5] * rhs[5] +
+        lhs[6] * rhs[6] +
+        lhs[7] * rhs[7] +
+        lhs[8] * rhs[8];
+}
 
 void main()
 {
@@ -158,7 +200,14 @@ void main()
     {
         //color.xyz = mix(vec3(0.5), vec3(puvw * (0.1 / distance(puvw,start))), accum.x);
         //distance(puvw, start));//puvw * 0.5;// + vec3(0.5);
-        color.xyz = vec3(0.7, 0.6, 0.2) * vec3(exp(-distance(iChunkLocalCamPos, puvw) / 10.0)) * dot(n, vec3(0.5, 1.0, 0.5));
+        float nsh[9];
+        sh_second_order(n, nsh);
+        vec3 Li = vec3(sh_dot(nsh, iSHBuffer_red),
+                       sh_dot(nsh, iSHBuffer_green),
+                       sh_dot(nsh, iSHBuffer_blue));
+
+        //color.xyz = vec3(0.7, 0.6, 0.2) * vec3(exp(-distance(iChunkLocalCamPos, puvw) / 10.0)) * dot(n, vec3(0.5, 1.0, 0.5));
+        color.xyz = Li;
         gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
     }
     else

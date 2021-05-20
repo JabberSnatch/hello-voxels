@@ -74,8 +74,8 @@ struct engine_t
 
     std::set<numtk::Vec3i64_t> generated_chunks{};
 
-    bool render_data_clean = false;
-    std::vector<numtk::Vec3_t> points{};
+    // bool render_data_clean = false;
+    // std::vector<numtk::Vec3_t> points{};
 
     oglbase::BufferPtr vbo{};
     oglbase::VAOPtr vao{};
@@ -374,12 +374,8 @@ void EngineReload(engine_t* ioEngine)
         ioEngine->chunk_handle = glGetTextureSamplerHandleARB(ioEngine->chunk_texture, ioEngine->sampler);
     }
 
-    numtk::Vec3_t const eye_position = ioEngine->campos();
-    numtk::Vec3i64_t const vs_eye_position = WS_to_VS(eye_position);
-
-    numtk::Vec3i64_t const player_chunk_index = ComputeChunkIndex(vs_eye_position);
     if (!ioEngine->lock_load_area)
-        ioEngine->campos_chunk_index = ComputeChunkIndex(vs_eye_position);
+        ioEngine->campos_chunk_index = ComputeChunkIndex(WS_to_VS(ioEngine->campos()));
 
     {
         using StdClock = std::chrono::high_resolution_clock;
@@ -422,6 +418,55 @@ void EngineReload(engine_t* ioEngine)
         std::cout << "Voxel generation " << load_time/1000.f << " s" << std::endl;
         std::cout << "  Chunk average " << chunk_average/1000.f << " s" << std::endl;
     } // VOXEL GENERATION
+
+    {
+        // SH preparation
+        static const numtk::Vec3_t w[6] {
+            {-1.f, 0.f, 0.f},
+            {1.f, 0.f, 0.f},
+            {0.f, -1.f, 0.f},
+            {0.f, 1.f, 0.f},
+            {0.f, 0.f, -1.f},
+            {0.f, 0.f, 1.f}
+        };
+
+        // f(w) = Csun * (max(0.0, dot(w, Lsun) - 0.5) * 2.0) + Csky * max(0.0, w.y)
+
+        static const numtk::Vec3_t Lsun = numtk::vec3_normalise({ -.1f, 1.f, .4f });
+        static const numtk::Vec3_t Csun{ .9f, .8f, .6f };
+        static const numtk::Vec3_t Csky{ .2f, .35f, .7f };
+
+        numtk::Vec3_t Li[6];
+
+        numtk::SH2nd_t sh_normals[6];
+        numtk::SH2nd_t sh_reduced[3]{
+            numtk::SH2nd_t{},
+            numtk::SH2nd_t{},
+            numtk::SH2nd_t{}
+        };
+
+        static const float weight = 1.f;
+        for (int i = 0; i < 6; ++i)
+        {
+            numtk::Vec3_t fw =
+                numtk::vec3_add(
+                    numtk::vec3_float_mul(Csun,
+                                          std::max(0.f, numtk::vec3_dot(w[i], Lsun))),
+                    numtk::vec3_float_mul(Csky, w[i][1] * 0.5f + 0.5f)
+                );
+            Li[i] = fw;
+
+            numtk::SH2nd_t wsh = numtk::sh_second_order(w[i]);
+            sh_normals[i] = wsh;
+
+            sh_reduced[0] = numtk::sh2nd_add(sh_reduced[0],
+                                             numtk::sh2nd_float_mul(wsh, fw[0] * weight));
+            sh_reduced[1] = numtk::sh2nd_add(sh_reduced[1],
+                                             numtk::sh2nd_float_mul(wsh, fw[1] * weight));
+            sh_reduced[2] = numtk::sh2nd_add(sh_reduced[2],
+                                             numtk::sh2nd_float_mul(wsh, fw[2] * weight));
+        }
+    }
 }
 
 void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)

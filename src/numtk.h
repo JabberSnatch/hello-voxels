@@ -23,8 +23,10 @@ using Vec4_t = std::array<float, 4>;
 using Mat4_t = std::array<float, 16>;
 using Quat_t = std::array<float, 4>;
 using dQuat_t = std::array<float, 8>;
+using SH2nd_t = std::array<float, 9>;
 
 constexpr float kPi = 3.1415926535f;
+constexpr float kInvPi = 1.f / kPi;
 
 inline Vec2i_t
 vec2i_sub(Vec2i_t const& _lhs, Vec2i_t const&_rhs)
@@ -561,6 +563,54 @@ inline Quat_t const&
 dquat_rotation(dQuat_t const& _op)
 {
     return *(Quat_t const*)&_op;
+}
+
+inline SH2nd_t
+sh_second_order(Vec3_t _w)
+{
+    return SH2nd_t{
+        .5f * std::sqrt(kInvPi),
+        _w[1] * std::sqrt(.75f * kInvPi),
+        _w[2] * std::sqrt(.75f * kInvPi),
+        _w[0] * std::sqrt(.75f * kInvPi),
+        .5f * _w[0]*_w[2] * std::sqrt(15.f * kInvPi),
+        .5f * _w[2]*_w[1] * std::sqrt(15.f * kInvPi),
+        .25f * (-_w[0]*_w[0] - _w[2]*_w[2] + 2.f*_w[1]*_w[1]) * std::sqrt(5.f * kInvPi),
+        .5f * _w[0]*_w[1] * std::sqrt(15.f * kInvPi),
+        .25f * (_w[0]*_w[0] - _w[2]*_w[2]) * std::sqrt(15.f * kInvPi)
+    };
+}
+
+inline SH2nd_t
+sh2nd_float_mul(SH2nd_t const& _lhs, float _rhs)
+{
+    return SH2nd_t{
+        _lhs[0] * _rhs,
+        _lhs[1] * _rhs,
+        _lhs[2] * _rhs,
+        _lhs[3] * _rhs,
+        _lhs[4] * _rhs,
+        _lhs[5] * _rhs,
+        _lhs[6] * _rhs,
+        _lhs[7] * _rhs,
+        _lhs[8] * _rhs
+    };
+}
+
+inline SH2nd_t
+sh2nd_add(SH2nd_t const& _lhs, SH2nd_t const& _rhs)
+{
+    return SH2nd_t{
+        _lhs[0] + _rhs[0],
+        _lhs[1] + _rhs[1],
+        _lhs[2] + _rhs[2],
+        _lhs[3] + _rhs[3],
+        _lhs[4] + _rhs[4],
+        _lhs[5] + _rhs[5],
+        _lhs[6] + _rhs[6],
+        _lhs[7] + _rhs[7],
+        _lhs[8] + _rhs[8]
+    };
 }
 
 } // namespace numtk

@@ -33,7 +33,6 @@
 #include "input.h"
 #include "timer.h"
 
-constexpr bool kGeometryPipeline = false;
 constexpr bool kFragmentPipeline = true;
 
 extern oglbase::ShaderSources_t const rtfrag;
@@ -181,126 +180,6 @@ numtk::Vec3_t VS_to_WS(numtk::Vec3i64_t const& _p)
     return VS_to_WS_float(vs);
 }
 
-void RefreshRenderBuffer(engine_t* ioEngine, numtk::Vec3i64_t const& eye_position)
-{
-    numtk::Vec3i64_t const chunk = ComputeChunkIndex(eye_position);
-
-    if (kGeometryPipeline) // geometry shader pipeline
-    {
-        using StdClock = std::chrono::high_resolution_clock;
-        auto start = StdClock::now();
-
-        numtk::Vec3i64_t camera_voxel = eye_position;
-        std::vector<numtk::Vec3i64_t> backlog{ camera_voxel };
-        {
-            unsigned render_distance = engine_t::kChunkSize * (engine_t::kChunkLoadExtent);
-            std::int64_t reserve_size = render_distance * render_distance * render_distance;
-            std::cout << "Preallocating " << reserve_size * 8u * 3u << " bytes" << std::endl;
-            backlog.reserve(reserve_size);
-        }
-
-        std::set<numtk::Vec3i64_t> processed{ camera_voxel };
-
-        std::vector<numtk::Vec3_t> isosurface{};
-        {
-            unsigned render_distance = engine_t::kChunkSize * (engine_t::kChunkLoadExtent);
-            std::int64_t reserve_size = render_distance * render_distance  * 2u;
-            std::cout << "Preallocating " << reserve_size * 4u * 3u << " bytes" << std::endl;
-            isosurface.reserve(reserve_size);
-        }
-
-        float dVoxelLookupTime = 0.f;
-
-        while (!backlog.empty())
-        {
-            numtk::Vec3i64_t voxel = backlog.back();
-            backlog.pop_back();
-
-            //std::cout << "Voxel " << voxel[0] << " " << voxel[1] << " " << voxel[2];
-
-            bool voxel_set = false;
-
-            {
-                using StdClock = std::chrono::high_resolution_clock;
-                auto start = StdClock::now();
-
-                voxel_set = ioEngine->vdb.get(voxel);
-
-                auto end = StdClock::now();
-                dVoxelLookupTime +=
-                    static_cast<float>(std::chrono::duration_cast<std::chrono::microseconds>(end-start).count());
-            }
-
-
-            if (voxel_set)
-            {
-                //std::cout << " isosurface" << std::endl;
-
-                isosurface.push_back({
-                    (float)voxel[0],
-                    (float)voxel[1],
-                    (float)voxel[2]
-                });
-            }
-            else
-            {
-                //std::cout << " outside" << std::endl;
-
-                std::array<numtk::Vec3i64_t, 6> const neighbours{
-                    numtk::vec3i64_add(voxel, {1, 0, 0}),
-                    numtk::vec3i64_add(voxel, {-1, 0, 0}),
-                    numtk::vec3i64_add(voxel, {0, 1, 0}),
-                    numtk::vec3i64_add(voxel, {0, -1, 0}),
-                    numtk::vec3i64_add(voxel, {0, 0, 1}),
-                    numtk::vec3i64_add(voxel, {0, 0, -1})
-                };
-
-                for (numtk::Vec3i64_t const& neighbour : neighbours)
-                {
-                    numtk::Vec3i64_t neighbour_chunk = ComputeChunkIndex(neighbour);
-
-                    if (std::abs(neighbour_chunk[0] - chunk[0]) <= engine_t::kChunkLoadRadius
-                        && std::abs(neighbour_chunk[1] - chunk[1]) <= engine_t::kChunkLoadRadius
-                        && std::abs(neighbour_chunk[2] - chunk[2]) <= engine_t::kChunkLoadRadius
-                        && !processed.count(neighbour)
-                    )
-                    {
-                        backlog.push_back(neighbour);
-                        processed.insert(neighbour);
-                    }
-                }
-            }
-        }
-
-        ioEngine->points = std::move(isosurface);
-
-        auto end = StdClock::now();
-        float load_time =
-            static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count());
-        std::cout << "Flood fill " << load_time/1000.f << " s" << std::endl;
-        std::cout << "Lookup " << dVoxelLookupTime/1000000.f << std::endl;
-    }
-
-    void* data = ioEngine->points.data();
-    int point_count = ioEngine->points.size();
-
-    ioEngine->vao.reset(0u);
-    glGenVertexArrays(1, ioEngine->vao.get());
-    ioEngine->vbo.reset(0u);
-    glGenBuffers(1, ioEngine->vbo.get());
-
-    glBindBuffer(GL_ARRAY_BUFFER, ioEngine->vbo);
-    glBufferData(GL_ARRAY_BUFFER, point_count * 3 * sizeof(float),
-                 data, GL_STATIC_DRAW);
-
-    glBindVertexArray(ioEngine->vao);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid const*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0u);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
 void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
 {
     Timer<Verbose> timer0("GenerateChunk");
@@ -440,97 +319,6 @@ void EngineReload(engine_t* ioEngine)
     for (engine_t::ChunkResources& chunk : ioEngine->chunks)
         chunk.base = { engine_t::kInvalidChunkIndex };
 
-    if (kGeometryPipeline) // geometry shader pipeline
-    {
-        static oglbase::ShaderSources_t const vshader{ "#version 330 core\n", R"__lstr__(
-            in vec3 in_position;
-            uniform float iExtent;
-            void main()
-            {
-                gl_Position = vec4(in_position * iExtent, 1.0);
-            }
-        )__lstr__" };
-
-        static oglbase::ShaderSources_t const fshader{ "#version 330 core\n", R"__lstr__(
-            layout(location = 0) out vec4 frag_color;
-            flat in vec3 outgs_voxelIndex;
-            uniform vec3 iLookAtVoxel;
-            void main()
-            {
-                vec3 color = clamp(outgs_voxelIndex / 32.0, -1.0, 1.0);
-                //color = color * 0.5 + vec3(0.5);
-
-                //color = floor(mod(outgs_voxelIndex, vec3(2.0, 2.0, 2.0)));
-
-                if (outgs_voxelIndex[0] == 0.f || outgs_voxelIndex[2] == 0.f) // || outgs_voxelIndex[1] == 0.f)
-                    color = vec3(1.0, 0.0, 0.0);
-                if (iLookAtVoxel == outgs_voxelIndex)
-                    color = vec3(0.2, 0.2, 0.2);
-                frag_color = vec4(color, 1.0);
-            }
-        )__lstr__" };
-
-        static oglbase::ShaderSources_t const gshader{ "#version 330 core\n",
-            "layout(points) in;\n",
-            "layout(triangle_strip, max_vertices = 24) out;\n",
-            "uniform mat4 iProjMat;\n"
-            "uniform float iExtent;\n"
-            "flat out vec3 outgs_voxelIndex;\n",
-            "void main() {\n",
-            "float kBaseExtent = iExtent/2.f;\n",
-            "vec4 in_position = gl_in[0].gl_Position;",
-
-            "outgs_voxelIndex = in_position.xyz / iExtent;",
-
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-
-            "gl_Position = iProjMat * (in_position + vec4(-1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, -1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, -1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "gl_Position = iProjMat * (in_position + vec4(-1, 1, 1, 0) * kBaseExtent); EmitVertex();",
-            "EndPrimitive();",
-            "}"
-        };
-
-        std::string log{};
-        oglbase::ShaderPtr vbin = oglbase::CompileShader(GL_VERTEX_SHADER, vshader, &log);
-        std::cout << "Vshader " << log << std::endl;
-        oglbase::ShaderPtr fbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, fshader, &log);
-        std::cout << "Fshader " << log << std::endl;
-        oglbase::ShaderPtr gbin = oglbase::CompileShader(GL_GEOMETRY_SHADER, gshader);
-        std::cout << "Gshader " << log << std::endl;
-        ioEngine->shader_program = oglbase::LinkProgram({ vbin, fbin, gbin }, &log);
-        std::cout << "Link " << log << std::endl;
-    } // RENDERDATA
-
     if (kFragmentPipeline)
     {
         oglbase::ShaderSources_t const vshader = rtvert;
@@ -634,9 +422,6 @@ void EngineReload(engine_t* ioEngine)
         std::cout << "Voxel generation " << load_time/1000.f << " s" << std::endl;
         std::cout << "  Chunk average " << chunk_average/1000.f << " s" << std::endl;
     } // VOXEL GENERATION
-
-    if (kGeometryPipeline)
-        RefreshRenderBuffer(ioEngine, { 0, 0, 0 });
 }
 
 void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
@@ -747,8 +532,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             {
                 quick_vdb::Position_t voxel{ ioEngine->look_at_voxel[0], ioEngine->look_at_voxel[1] + 1, ioEngine->look_at_voxel[2] };
                 ioEngine->vdb.set(voxel);
-                if (kGeometryPipeline)
-                    RefreshRenderBuffer(ioEngine, { 0, 0, 0 });
             }
 #endif
         }
@@ -904,51 +687,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
                 ioEngine->look_at_voxel = { -1337, -1337, -1337 };
         }
 #endif
-    }
-
-    if (kGeometryPipeline) // geometry shader pipeline
-    {
-        // draw call
-        glViewport(0, 0, iInput->screen_size[0], iInput->screen_size[1]);
-        glDisable(GL_MULTISAMPLE);
-        glDisable(GL_BLEND);
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_STENCIL_TEST);
-        glEnable(GL_DEPTH_TEST);
-        glFrontFace(GL_CCW);
-        glEnable(GL_CULL_FACE);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-        static GLfloat const clear_color[]{ 0.5f, 0.5f, 0.5f, 1.f };
-        glClearBufferfv(GL_COLOR, 0, clear_color);
-        static GLfloat const clear_depth = 1.f;
-        glClearBufferfv(GL_DEPTH, 0, &clear_depth);
-
-        glUseProgram(ioEngine->shader_program);
-        {
-            int const projmat_loc = glGetUniformLocation(ioEngine->shader_program, "iProjMat");
-            if (projmat_loc >= 0)
-                glUniformMatrix4fv(projmat_loc, 1, GL_FALSE, &ioEngine->projection_matrix[0]);
-
-            int const extent_loc = glGetUniformLocation(ioEngine->shader_program, "iExtent");
-            if (extent_loc >= 0)
-                glUniform1f(extent_loc, engine_t::kVoxelScale);
-
-            numtk::Vec3_t v{
-                (float)ioEngine->look_at_voxel[0],
-                (float)ioEngine->look_at_voxel[1],
-                (float)ioEngine->look_at_voxel[2]
-            };
-            int const lookatvoxel_loc = glGetUniformLocation(ioEngine->shader_program, "iLookAtVoxel");
-            if (lookatvoxel_loc >= 0)
-                glUniform3fv(lookatvoxel_loc, 1, &v[0]);
-        }
-
-        glBindVertexArray(ioEngine->vao);
-        glDrawArrays(GL_POINTS, 0, ioEngine->points.size());
-        glBindVertexArray(0u);
-
-        glUseProgram(0u);
     }
 
     if (kFragmentPipeline)

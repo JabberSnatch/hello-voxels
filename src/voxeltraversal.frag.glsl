@@ -1,0 +1,172 @@
+R"__lstr__(
+#version 430 core
+
+#extension GL_ARB_bindless_texture : require
+
+vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
+{
+    vec4 target = vec4(clip_coord, 1.0, 1.0);
+    vec4 ray_direction = perspective_inverse * target;
+    ray_direction = ray_direction / ray_direction.w;
+    return normalize(ray_direction.xyz);
+}
+
+float maxc(vec3 v) {return max(max(v.x, v.y), v.z); }
+
+uniform mat4 iInvProj;
+uniform vec2 iResolution;
+
+uniform float iExtent;
+
+layout(bindless_sampler) uniform sampler3D iChunk;
+uniform float iChunkExtent;
+uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
+
+layout(location = 0) out vec4 color;
+
+void main()
+{
+    vec2 frag_coord = vec2(gl_FragCoord.xy);
+    vec2 clip_coord = ((frag_coord / iResolution) - 0.5) * 2.0;
+
+    vec3 rd = raydir_frommat(iInvProj, clip_coord);
+    vec3 ro = iChunkLocalCamPos;// - vec3(0.5);
+
+    vec3 n = vec3(0.0);
+
+    #if 1
+    if (ro.x < 0.0 || ro.x > 1.0
+        || ro.y < 0.0 || ro.y > 1.0
+        || ro.z < 0.0 || ro.z > 1.0)
+    {
+        ro = iChunkLocalCamPos - vec3(0.5);
+
+        float winding = (maxc(abs(ro) * 2.0) < 1.0) ? -1.0 : 1.0;
+        vec3 sgn = -sign(rd);
+        vec3 d = (0.5 * winding * sgn - ro) / rd;
+
+        #define TEST(U, V, W)                                           \
+            (d.U >= 0.0) && all(lessThan(abs(vec2(ro.V, ro.W) + vec2(rd.V, rd.W)*d.U), vec2(0.5)))
+
+        bvec3 test = bvec3(
+            TEST(x, y, z),
+            TEST(y, z, x),
+            TEST(z, x, y));
+
+        #undef TEST
+
+
+        sgn = test.x ? vec3(sgn.x,0,0) : (test.y ? vec3(0,sgn.y,0) : vec3(0, 0,test.z ? sgn.z : 0));
+
+        float distance = (sgn.x != 0) ? d.x : ((sgn.y != 0) ? d.y : d.z);
+        //vec3 normal = sgn;
+        //n = sgn;
+        bool hit = (sgn.x != 0) || (sgn.y != 0) || (sgn.z != 0);
+
+        // bounds intersection
+        //color = (vec4(rd, 1.0));
+
+        if (hit)
+        {
+            //color = vec4(normal * 0.5 + vec3(0.5), 1.0);
+            //vec3 puvw = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
+            //vec3 pvoxel = puvw * iChunkExtent;
+
+            //gl_FragDepth = distance / 1000.f;
+            //color.xyz = puvw;////vec3(distance*0.5);//texture(iChunk, puvw).xxx;
+            ro = (ro + rd * distance * 1.0001) + vec3(0.5);
+            n = sgn;
+        }
+        else
+        {
+            discard;
+        }
+    }
+    else
+    {
+        //discard;
+    }
+    #endif
+
+    #if 1
+
+    vec3 stepSign = sign(rd);
+    vec3 vsro = ro * iChunkExtent;
+    vec3 p = floor(vsro);
+
+    vec3 manh = stepSign * (vec3(0.5) - fract(vsro)) + 0.5;
+    vec3 compv = (stepSign * 0.5 + vec3(0.5));
+
+    vec3 tDelta = 1.f / abs(rd);
+    vec3 tMax = manh * tDelta;
+    vec3 uvwstep = stepSign / iChunkExtent;
+    vec3 puvw = (p + vec3(0.5))  / iChunkExtent;
+    vec3 start = puvw;
+
+    //color.xyz = tMax;
+
+    #if 1
+    float accum = 0.f;
+    float t = 0.f;
+
+    while( (puvw.x * stepSign.x < compv.x)
+           && (puvw.y * stepSign.y < compv.y)
+           && (puvw.z * stepSign.z < compv.z))
+    {
+        accum += texture(iChunk, puvw).x;
+        if (accum.x >= 1.0) break;
+
+        if (tMax.x < tMax.y)
+        {
+            if (tMax.x < tMax.z)
+            {
+                puvw.x += uvwstep.x;
+                tMax.x += tDelta.x;
+                t += tDelta.x;
+                n = -vec3(stepSign.x, 0.0, 0.0);
+            }
+            else
+            {
+                puvw.z += uvwstep.z;
+                tMax.z += tDelta.z;
+                t += tDelta.z;
+                n = -vec3(0.0, 0.0, stepSign.z);
+            }
+        }
+
+        else
+        {
+            if (tMax.y < tMax.z)
+            {
+                puvw.y += uvwstep.y;
+                tMax.y += tDelta.y;
+                t += tDelta.y;
+                n = -vec3(0.0, stepSign.y, 0.0);
+            }
+            else
+            {
+                puvw.z += uvwstep.z;
+                tMax.z += tDelta.z;
+                t += tDelta.z;
+                n = -vec3(0.0, 0.0, stepSign.z);
+            }
+        }
+
+    }
+
+    if (accum.x >= 1.0)
+    {
+        //color.xyz = mix(vec3(0.5), vec3(puvw * (0.1 / distance(puvw,start))), accum.x);
+        //distance(puvw, start));//puvw * 0.5;// + vec3(0.5);
+        color.xyz = vec3(0.7, 0.6, 0.2) * vec3(exp(-distance(iChunkLocalCamPos, puvw) / 10.0)) * dot(n, vec3(0.5, 1.0, 0.5));
+        gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
+    }
+    else
+    {
+        discard;
+    }
+    #endif
+    #endif
+}
+
+)__lstr__"

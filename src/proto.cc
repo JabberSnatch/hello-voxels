@@ -58,13 +58,14 @@ struct engine_t
     numtk::Vec3_t player_position{ 0.f, 16.f, 0.f };
     numtk::Vec3_t player_velocity{ 0.f, -5.f, 0.f };
     bool noclip_mode = false;
+    bool lock_load_area = false;
     bool player_on_ground = false;
     numtk::Vec3i64_t last_voxel{};
     numtk::Vec3i64_t look_at_voxel{ -1337, -1337, -1337 };
 
     static constexpr unsigned kLog2ChunkSize = 6u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 1;
+    static constexpr int kChunkLoadRadius = 2;
     static constexpr float kVoxelScale = .25f;
     using VDB_t = quick_vdb::RootNode< quick_vdb::BranchNode< quick_vdb::BranchNode<
                   quick_vdb::LeafNode<kLog2ChunkSize>, 4u>, 4u>>;
@@ -302,8 +303,7 @@ void RefreshRenderBuffer(engine_t* ioEngine, numtk::Vec3i64_t const& eye_positio
 
 void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
 {
-    Timer<Info> timer0("GenerateChunk");
-    std::cout << "Generating chunk" << std::endl;
+    Timer<Verbose> timer0("GenerateChunk");
 
     numtk::Vec3i64_t const chunk_voxel_base = chunk_base;
 
@@ -319,9 +319,9 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                 bool set_voxel = [](numtk::Vec3i64_t const& voxel_world)
                 {
                     #if 0
-                    return ((voxel_world[0] & 1u)
-                            & (voxel_world[1] & 1u)
-                            & (voxel_world[2] & 1u)) != 0u;
+                    return ((voxel_world[0] & 3u)
+                            + (voxel_world[1] & 3u)
+                            + (voxel_world[2] & 3u)) < 2u;
                     #endif
                     //return (voxel_world[1] < 16);
 
@@ -358,8 +358,7 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
 
 void UploadChunk(engine_t::ChunkResources& ioResources, engine_t::VDB_t& vdb, oglbase::BufferPtr const& staging_buffer)
 {
-    Timer<Info> timer0("UploadChunk");
-    std::cout << "Uploading chunk..." << std::endl;
+    Timer<Verbose> timer0("UploadChunk");
 
     std::size_t size = 0u;
     std::uint64_t const* buffer = nullptr;
@@ -591,14 +590,15 @@ void EngineReload(engine_t* ioEngine)
     numtk::Vec3i64_t const vs_eye_position = WS_to_VS(eye_position);
 
     numtk::Vec3i64_t const player_chunk_index = ComputeChunkIndex(vs_eye_position);
-    ioEngine->campos_chunk_index = player_chunk_index;
+    if (!ioEngine->lock_load_area)
+        ioEngine->campos_chunk_index = ComputeChunkIndex(vs_eye_position);
 
     {
         using StdClock = std::chrono::high_resolution_clock;
         auto start = StdClock::now();
 
         numtk::Vec3i64_t const load_bounds_min =
-            numtk::vec3i64_add(player_chunk_index, { -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius });
+            numtk::vec3i64_add(ioEngine->campos_chunk_index, { -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius, -engine_t::kChunkLoadRadius });
 
         for (std::int64_t z = 0; z < engine_t::kChunkLoadExtent; ++z)
         {
@@ -674,6 +674,12 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             ioEngine->noclip_mode = !ioEngine->noclip_mode;
             ioEngine->player_on_ground = false;
             std::cout << "Noclip mode " << (ioEngine->noclip_mode ? "enabled" : "disabled") << std::endl;
+        }
+
+        if (!iInput->key_down['k'] && iInput->back_key_down['k']) // on release
+        {
+            ioEngine->lock_load_area = !ioEngine->lock_load_area;
+            std::cout << "Lock area " << (ioEngine->lock_load_area ? "enabled" : "disabled") << std::endl;
         }
 
         {
@@ -949,8 +955,10 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
     {
         numtk::Vec3i64_t const campos_chunk_index = ComputeChunkIndex(WS_to_VS(ioEngine->campos()));
 
-        if (campos_chunk_index != ioEngine->campos_chunk_index)
+        if (!ioEngine->lock_load_area && campos_chunk_index != ioEngine->campos_chunk_index)
         {
+            Timer<Info> timer0("ChunkReloc");
+
             numtk::Vec3i64_t const delta = numtk::vec3i64_sub(campos_chunk_index, ioEngine->campos_chunk_index);
 
             numtk::Vec3i64_t const sign{ (delta[0] < 0) ? 0 : 1,
@@ -1111,168 +1119,6 @@ oglbase::ShaderSources_t const rtvert{ "#version 430 core\n", R"__lstr__(
 
         )__lstr__"};
 
-oglbase::ShaderSources_t const rtfrag{ "#version 430 core\n", R"__lstr__(
-
-            #extension GL_ARB_bindless_texture : require
-
-            vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
-            {
-                vec4 target = vec4(clip_coord, 1.0, 1.0);
-                vec4 ray_direction = perspective_inverse * target;
-                ray_direction = ray_direction / ray_direction.w;
-                return normalize(ray_direction.xyz);
-            }
-
-            float maxc(vec3 v) {return max(max(v.x, v.y), v.z); }
-
-            uniform mat4 iInvProj;
-            uniform vec2 iResolution;
-
-            uniform float iExtent;
-
-            layout(bindless_sampler) uniform sampler3D iChunk;
-            uniform float iChunkExtent;
-            uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
-
-            layout(location = 0) out vec4 color;
-
-            void main()
-            {
-                vec2 frag_coord = vec2(gl_FragCoord.xy);
-	            vec2 clip_coord = ((frag_coord / iResolution) - 0.5) * 2.0;
-
-                vec3 rd = raydir_frommat(iInvProj, clip_coord);
-                vec3 ro = iChunkLocalCamPos;// - vec3(0.5);
-
-#if 1
-                if (ro.x < 0.0 || ro.x > 1.0
-                    || ro.y < 0.0 || ro.y > 1.0
-                    || ro.z < 0.0 || ro.z > 1.0)
-                {
-                ro = iChunkLocalCamPos - vec3(0.5);
-
-                float winding = (maxc(abs(ro) * 2.0) < 1.0) ? -1.0 : 1.0;
-                vec3 sgn = -sign(rd);
-                vec3 d = (0.5 * winding * sgn - ro) / rd;
-
-            #define TEST(U, V, W) \
-                (d.U >= 0.0) && all(lessThan(abs(vec2(ro.V, ro.W) + vec2(rd.V, rd.W)*d.U), vec2(0.5)))
-
-            bvec3 test = bvec3(
-                TEST(x, y, z),
-                TEST(y, z, x),
-                TEST(z, x, y));
-
-            #undef TEST
-
-
-            sgn = test.x ? vec3(sgn.x,0,0) : (test.y ? vec3(0,sgn.y,0) : vec3(0, 0,test.z ? sgn.z : 0));
-
-            float distance = (sgn.x != 0) ? d.x : ((sgn.y != 0) ? d.y : d.z);
-            vec3 normal = sgn;
-            bool hit = (sgn.x != 0) || (sgn.y != 0) || (sgn.z != 0);
-
-                // bounds intersection
-                //color = (vec4(rd, 1.0));
-
-                if (hit)
-                {
-                    //color = vec4(normal * 0.5 + vec3(0.5), 1.0);
-                    //vec3 puvw = (ro + rd * distance * 1.0001) * 0.5 + vec3(0.5);
-                    //vec3 pvoxel = puvw * iChunkExtent;
-
-                    //gl_FragDepth = distance / 1000.f;
-                    //color.xyz = puvw;////vec3(distance*0.5);//texture(iChunk, puvw).xxx;
-                    ro = (ro + rd * distance * 1.0001) + vec3(0.5);
-                }
-else
-{
-discard;
-}
-                }
-else
-{
-//discard;
-}
-#endif
-
-#if 1
-
-                vec3 stepSign = sign(rd);
-                vec3 vsro = ro * iChunkExtent;
-                vec3 p = floor(vsro);
-
-                vec3 manh = stepSign * (vec3(0.5) - fract(vsro)) + 0.5;
-                //vec3 manh = mix(fract(vsro), 1.0 - fract(vsro), stepSign * 0.5 + 0.5);
-                vec3 compv = (stepSign * 0.5 + vec3(0.5));
-
-                vec3 tDelta = 1.f / abs(rd);
-                vec3 tMax = manh * tDelta;
-                vec3 uvwstep = stepSign / iChunkExtent;
-                vec3 puvw = (p + vec3(0.5))  / iChunkExtent;
-                vec3 start = puvw;
-                vec3 temp = puvw;
-
-                //color.xyz = tMax;
-
-#if 1
-                float accum = 0.f;
-                float t = 0.f;
-                while( (puvw.x * stepSign.x < compv.x)
-                    && (puvw.y * stepSign.y < compv.y)
-                    && (puvw.z * stepSign.z < compv.z))
-                {
-
-temp = puvw;
-accum += texture(iChunk, puvw).x;// / 32.f;
-if (accum.x >= 1.0) break;
-
-if (tMax.x < tMax.y)
-{
-    if (tMax.x < tMax.z)
-    {
-        puvw.x += uvwstep.x;
-        tMax.x += tDelta.x;
-        t += tDelta.x;
-    }
-    else
-    {
-        puvw.z += uvwstep.z;
-        tMax.z += tDelta.z;
-        t += tDelta.z;
-    }
-}
-
-else
-{
-    if (tMax.y < tMax.z)
-    {
-        puvw.y += uvwstep.y;
-        tMax.y += tDelta.y;
-        t += tDelta.y;
-    }
-    else
-    {
-        puvw.z += uvwstep.z;
-        tMax.z += tDelta.z;
-        t += tDelta.z;
-    }
-}
-
-                }
-
-if (accum.x >= 1.0)
-{
-                color.xyz = mix(vec3(0.5), vec3(puvw * (0.1 / distance(puvw,start))), accum.x);
-                    //distance(puvw, start));//puvw * 0.5;// + vec3(0.5);
-                gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
-}
-else
-{
-discard;
-}
-#endif
-#endif
-            }
-
-        )__lstr__" };
+oglbase::ShaderSources_t const rtfrag{
+    #include "voxeltraversal.frag.glsl"
+};

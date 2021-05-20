@@ -84,7 +84,6 @@ struct engine_t
     oglbase::BufferPtr staging_buffer{};
     oglbase::SamplerPtr sampler{};
 
-    oglbase::BufferPtr sh_buffer{};
     numtk::SH2nd_t sh_data[3];
 
     oglbase::TexturePtr chunk_texture{};
@@ -219,6 +218,27 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                     fvoxel_world =
                         numtk::vec3_add(fvoxel_world,
                                         numtk::vec3_constant(0.5f * engine_t::kVoxelScale));
+
+                    static const float freq = 10.f;
+                    static const float hfreq = freq*0.5f;
+                    numtk::Vec3_t repeat{
+                        std::copysign(
+                            std::fmod(std::abs(fvoxel_world[0]) + hfreq, freq) - hfreq,
+                            fvoxel_world[0]
+                        ),
+                        std::copysign(
+                            std::fmod(std::abs(fvoxel_world[1]) + hfreq, freq) - hfreq,
+                            fvoxel_world[1]
+                        ),
+                        std::copysign(
+                            std::fmod(std::abs(fvoxel_world[2]) + hfreq, freq) - hfreq,
+                            fvoxel_world[2]
+                        )
+                    };
+
+                    float distance = numtk::vec3_norm(repeat);
+                    //return distance * (std::cos(distance * 1.618033f) + 1.f) < 2.f;
+                    return distance < 2.f * (std::fmod(std::cos(distance * 1.618033f), 1.f) + 1.f);
 
                     float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
                     float otherradius = numtk::vec3_norm({ fvoxel_world[0] - 2.f, 0.f, fvoxel_world[2]+10.f });
@@ -422,72 +442,12 @@ void EngineReload(engine_t* ioEngine)
         std::cout << "  Chunk average " << chunk_average/1000.f << " s" << std::endl;
     } // VOXEL GENERATION
 
-    {
-        // SH preparation
-        static const numtk::Vec3_t w[6] {
-            {-1.f, 0.f, 0.f},
-            {1.f, 0.f, 0.f},
-            {0.f, -1.f, 0.f},
-            {0.f, 1.f, 0.f},
-            {0.f, 0.f, -1.f},
-            {0.f, 0.f, 1.f}
-        };
-
-        static const numtk::Vec3_t Lsun = numtk::vec3_normalise({ -.1f, .5f, .4f });
-        static const numtk::Vec3_t Csun{ .9f, .8f, .4f };
-        static const numtk::Vec3_t Csky = numtk::vec3_float_mul({ .2f, .35f, .7f }, 0.2f);
-
-        numtk::Vec3_t Li[6];
-
-        numtk::SH2nd_t sh_normals[6];
-        numtk::SH2nd_t sh_reduced[3]{
-            numtk::SH2nd_t{},
-            numtk::SH2nd_t{},
-            numtk::SH2nd_t{}
-        };
-
-        static const float weight = 1.f;
-        for (int i = 0; i < 6; ++i)
-        {
-            numtk::Vec3_t fw =
-                numtk::vec3_add(
-                    numtk::vec3_float_mul(Csun,
-                                          std::max(0.f, numtk::vec3_dot(w[i], Lsun))),
-                    numtk::vec3_float_mul(Csky, w[i][1] * 0.5f + 0.5f)
-                );
-            Li[i] = fw;
-
-            numtk::SH2nd_t wsh = numtk::sh_second_order(w[i]);
-            sh_normals[i] = wsh;
-
-            sh_reduced[0] = numtk::sh2nd_add(sh_reduced[0],
-                                             numtk::sh2nd_float_mul(wsh, fw[0] * weight));
-            sh_reduced[1] = numtk::sh2nd_add(sh_reduced[1],
-                                             numtk::sh2nd_float_mul(wsh, fw[1] * weight));
-            sh_reduced[2] = numtk::sh2nd_add(sh_reduced[2],
-                                             numtk::sh2nd_float_mul(wsh, fw[2] * weight));
-        }
-
-        ioEngine->sh_data[0] = sh_reduced[0];
-        ioEngine->sh_data[1] = sh_reduced[1];
-        ioEngine->sh_data[2] = sh_reduced[2];
-
-        glCreateBuffers(1, ioEngine->sh_buffer.get());
-
-        glBindBuffer(GL_UNIFORM_BUFFER, ioEngine->sh_buffer);
-        glBufferData(GL_UNIFORM_BUFFER,
-                     sizeof(numtk::SH2nd_t) * 3,
-                     &sh_reduced[0],
-                     GL_STATIC_DRAW);
-
-        glBindBuffer(GL_UNIFORM_BUFFER, 0u);
-    }
 }
 
-void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
+void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 {
     //static constexpr float kFrameTime = 0.016f;
-    const float kFrameTime = update_dt;
+    const float kFrameTime = iInput->time_step;
 
     if (false)
     {
@@ -496,7 +456,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
     }
 
 #if 0
-    std::cout << "input time " << update_dt << std::endl;
+    std::cout << "input time " << iInput->time_step << std::endl;
     std::cout << iInput->key_down[' '] << " "
               << ((iInput->mod_down & fKeyMod::kShift) != 0) << std::endl
               << iInput->key_down['w'] << " "
@@ -572,7 +532,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
             {
                 d = numtk::vec3_normalise(d);
 
-                static constexpr float kLineSpeed = 50.0f;
+                static constexpr float kLineSpeed = 5.0f;
                 numtk::Vec3_t dp = d;
                 numtk::Mat4_t camrot = numtk::mat4_from_quat(ioEngine->camera_current);
                 numtk::Vec3_t wsdp = numtk::vec3_from_vec4(numtk::mat4_vec4_mul(camrot, numtk::vec3_float_concat(dp, 0.f)));
@@ -855,13 +815,67 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput, float update_dt)
         }
 
         {
+            // SH preparation
+            static const numtk::Vec3_t w[6] {
+                {-1.f, 0.f, 0.f},
+                {1.f, 0.f, 0.f},
+                {0.f, -1.f, 0.f},
+                {0.f, 1.f, 0.f},
+                {0.f, 0.f, -1.f},
+                {0.f, 0.f, 1.f}
+            };
+
+            const float tt = iInput->time_total;
+            const numtk::Vec3_t Lsun = numtk::vec3_normalise({
+                .2f,
+                .4f,// * std::cos(tt * 0.5f),
+                .4f,// * std::sin(tt * 0.5f)
+            });
+            const numtk::Vec3_t Csun =
+                numtk::vec3_float_mul({ .9f, .8f, .4f },
+                                      3.f);
+            const numtk::Vec3_t Csky =
+                numtk::vec3_float_mul({ .45f, .5f, .7f },
+                                      std::max(0.f, 1.f));// * std::cos(tt*0.5f) + 0.25f));
+
+            numtk::Vec3_t Li[6];
+
+            numtk::SH2nd_t sh_normals[6];
+            numtk::SH2nd_t sh_reduced[3]{
+                numtk::SH2nd_t{},
+                numtk::SH2nd_t{},
+                numtk::SH2nd_t{}
+            };
+
+            static const float weight = 1.f;
+            for (int i = 0; i < 6; ++i)
+            {
+                numtk::Vec3_t fw =
+                    numtk::vec3_add(
+                        numtk::vec3_float_mul(Csun,
+                                              std::max(0.f, numtk::vec3_dot(w[i], Lsun))),
+                        numtk::vec3_float_mul(Csky, w[i][1] * 0.5f + 0.5f)
+                    );
+                Li[i] = fw;
+
+                numtk::SH2nd_t wsh = numtk::sh_second_order(w[i]);
+                sh_normals[i] = wsh;
+
+                sh_reduced[0] = numtk::sh2nd_add(sh_reduced[0],
+                                                 numtk::sh2nd_float_mul(wsh, fw[0] * weight));
+                sh_reduced[1] = numtk::sh2nd_add(sh_reduced[1],
+                                                 numtk::sh2nd_float_mul(wsh, fw[1] * weight));
+                sh_reduced[2] = numtk::sh2nd_add(sh_reduced[2],
+                                                 numtk::sh2nd_float_mul(wsh, fw[2] * weight));
+            }
+
             int loc;
             loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_red");
-            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[0]);
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&sh_reduced[0]);
             loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_green");
-            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[1]);
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&sh_reduced[1]);
             loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_blue");
-            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&ioEngine->sh_data[2]);
+            glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&sh_reduced[2]);
 
         }
 

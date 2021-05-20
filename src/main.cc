@@ -76,7 +76,7 @@ struct engine_module_t
     void* hlib;
     time_t last_load_time;
 
-    void (*run_frame_cb)(void*, void*, float);
+    void (*run_frame_cb)(void*, void*);
     void (*init_cb)(void**);
     void (*shutdown_cb)(void*);
     void (*onreload_cb)(void*);
@@ -285,6 +285,7 @@ int main(int __argc, char* __argv[])
     glXMakeCurrent(display, window, glx_context);
     int i = 0;
     float time_accum = 0.f;
+    float time_total = 0.f;
     float last_frame_time = 0.f;
     float last_average_time = 0.f;
     bool hide_cursor = false;
@@ -411,7 +412,11 @@ int main(int __argc, char* __argv[])
 
             float update_time = last_frame_time;
             update_time = std::max(0.001f, update_time);
-            engine_main.run_frame_cb(engine, input, update_time);
+            time_total += update_time;
+            input[0].time_step = update_time;
+            input[0].time_total = time_total;
+
+            engine_main.run_frame_cb(engine, input);
         }
 
         input[0].back_key_down = input[0].key_down;
@@ -481,7 +486,7 @@ bool UpdateEngineModule(engine_module_t& _module)
     if (_module.hlib)
     {
         // load funcs
-        _module.run_frame_cb = (void(*)(void*, void*, float))dlsym(_module.hlib, "EngineRunFrame");
+        _module.run_frame_cb = (void(*)(void*, void*))dlsym(_module.hlib, "EngineRunFrame");
         if (!_module.run_frame_cb)
             std::cout << "EngineRunFrame not found" << std::endl;
 

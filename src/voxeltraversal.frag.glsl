@@ -207,7 +207,17 @@ void main()
                        sh_dot(nsh, iSHBuffer_blue));
 
         //color.xyz = vec3(0.7, 0.6, 0.2) * vec3(exp(-distance(iChunkLocalCamPos, puvw) / 10.0)) * dot(n, vec3(0.5, 1.0, 0.5));
-        color.xyz = Li;
+        vec3 voxel_index = floor(puvw) + vec3(16.0);
+
+        vec3 groundcolor =
+            vec3(0.2, 0.56862745098, 0.043137254902) * max(0.0, n[1]) * 0.5f+
+            vec3(0.207843137255, 0.254901960784, 0.117647058824) * min(1.0, (abs(n[0]) + abs(n[2]))) +
+            vec3(0.262745098039, 0.239215686275, 0.0627450980392) * abs(min(0.0, n[1])) +
+            vec3(0.207843137255, 0.211764705882, 0.196078431373) * abs(min(0.0, n[1])) * 0.f;
+        //groundcolor *= 2.f;
+
+        color.xyz = Li * exp(-distance(iChunkLocalCamPos, puvw) / 10.f);
+color.xyz = color.xyz * groundcolor * 3.f;
         gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
     }
     else

@@ -34,6 +34,9 @@ enum fKeyMod
 
 struct input_t
 {
+    float time_step;
+    float time_total;
+
     std::array<int, 2> screen_size{ 0, 0 };
     bool mouse_down{ false };
     std::array<int, 2> mouse_pos{ -1, -1 };

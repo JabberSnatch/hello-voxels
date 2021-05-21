@@ -214,10 +214,11 @@ void main()
             vec3(0.207843137255, 0.254901960784, 0.117647058824) * min(1.0, (abs(n[0]) + abs(n[2]))) +
             vec3(0.262745098039, 0.239215686275, 0.0627450980392) * abs(min(0.0, n[1])) +
             vec3(0.207843137255, 0.211764705882, 0.196078431373) * abs(min(0.0, n[1])) * 0.f;
-        //groundcolor *= 2.f;
+        groundcolor *= 2.f;
 
-        color.xyz = Li * exp(-distance(iChunkLocalCamPos, puvw) / 10.f);
-color.xyz = color.xyz * groundcolor * 3.f;
+        color.xyz = mix(vec3(0.36, 0.4, 0.58), Li, exp(-distance(iChunkLocalCamPos, puvw) / 2.f));
+//color.xyz = Li;
+        color.xyz = color.xyz * groundcolor;
         gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
     }
     else

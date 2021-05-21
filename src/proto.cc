@@ -32,6 +32,7 @@
 
 #include "input.h"
 #include "timer.h"
+#include "rng.h"
 
 constexpr bool kFragmentPipeline = true;
 
@@ -64,7 +65,7 @@ struct engine_t
 
     static constexpr unsigned kLog2ChunkSize = 6u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 2;
+    static constexpr int kChunkLoadRadius = 4;
     static constexpr float kVoxelScale = .25f;
     using VDB_t = quick_vdb::RootNode< quick_vdb::BranchNode< quick_vdb::BranchNode<
                   quick_vdb::LeafNode<kLog2ChunkSize>, 4u>, 4u>>;
@@ -188,6 +189,28 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
 
     numtk::Vec3i64_t const chunk_voxel_base = chunk_base;
 
+    float heightmap[engine_t::kChunkSize * engine_t::kChunkSize];
+    {
+
+        for (std::int64_t vz = 0; vz < engine_t::kChunkSize; ++vz)
+        {
+            for (std::int64_t vx = 0; vx < engine_t::kChunkSize; ++vx)
+            {
+                numtk::Vec3i64_t const voxel_index{ vx, 0, vz };
+                numtk::Vec3i64_t const voxel_world = numtk::vec3i64_add(chunk_voxel_base, voxel_index);
+
+                numtk::Vec3_t fvoxel_world = VS_to_WS(voxel_world);
+                fvoxel_world =
+                    numtk::vec3_add(fvoxel_world,
+                                    numtk::vec3_constant(0.5f * engine_t::kVoxelScale));
+
+                numtk::Vec3_t p{ fvoxel_world[0], 0.f, fvoxel_world[2] };
+
+                heightmap[vz + vx*engine_t::kChunkSize] = rng::noise3(&p[0]) * 5.f;
+            }
+        }
+    }
+
     for (std::int64_t vz = 0; vz < engine_t::kChunkSize; ++vz)
     {
         for (std::int64_t vy = 0; vy < engine_t::kChunkSize; ++vy)
@@ -197,7 +220,7 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                 numtk::Vec3i64_t voxel_index{ vx, vy, vz };
                 numtk::Vec3i64_t voxel_world = numtk::vec3i64_add(chunk_voxel_base, voxel_index);
 
-                bool set_voxel = [](numtk::Vec3i64_t const& voxel_world)
+                bool set_voxel = [&heightmap, vx, vz](numtk::Vec3i64_t const& voxel_world)
                 {
                     #if 0
                     return ((voxel_world[0] & 3u)
@@ -236,12 +259,18 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                         )
                     };
 
+#if 0
                     float distance = numtk::vec3_norm(repeat);
                     //return distance * (std::cos(distance * 1.618033f) + 1.f) < 2.f;
                     return distance < 2.f * (std::fmod(std::cos(distance * 1.618033f), 1.f) + 1.f);
+#endif
 
                     float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
                     float otherradius = numtk::vec3_norm({ fvoxel_world[0] - 2.f, 0.f, fvoxel_world[2]+10.f });
+
+                    bool floor = fvoxel_world[1] <= (heightmap[vz + vx*engine_t::kChunkSize] + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f);
+                    bool ceil = fvoxel_world[1] >= -heightmap[vz + vx*engine_t::kChunkSize] + 100.f + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
+                    return floor || ceil;
 
                     return fvoxel_world[1] < (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
                 }(voxel_world);

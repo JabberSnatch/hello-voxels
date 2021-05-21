@@ -23,7 +23,7 @@ add_subdirectory(src/quick_vdb)
 
 add_subdirectory(src/oglbase)
 
-add_library(engine SHARED ${SOURCE_DIR}/proto.cc)
+add_library(engine SHARED ${SOURCE_DIR}/proto.cc ${SOURCE_DIR}/rng.cc)
 target_link_libraries(engine PRIVATE oglbase qvdb)
 
 

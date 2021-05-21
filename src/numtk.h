@@ -20,6 +20,7 @@ using Vec3i64_t = std::array<std::int64_t, 3>;
 using Vec2_t = std::array<float, 2>;
 using Vec3_t = std::array<float, 3>;
 using Vec4_t = std::array<float, 4>;
+using Mat3_t = std::array<float, 9>;
 using Mat4_t = std::array<float, 16>;
 using Quat_t = std::array<float, 4>;
 using dQuat_t = std::array<float, 8>;
@@ -112,6 +113,13 @@ vec3_cwise_mul(Vec3_t const& _lhs, Vec3_t const& _rhs)
     return Vec3_t{ _lhs[0]*_rhs[0], _lhs[1]*_rhs[1], _lhs[2]*_rhs[2] };
 }
 
+template <typename FT>
+inline Vec3_t
+vec3_unary_op(Vec3_t const& _lhs, FT _op)
+{
+    return Vec3_t{ _op(_lhs[0]), _op(_lhs[1]), _op(_lhs[2]) };
+}
+
 inline float
 vec3_dot(Vec3_t const& _lhs, Vec3_t const& _rhs)
 {
@@ -134,6 +142,12 @@ vec3_norm(Vec3_t const& _op)
     return std::sqrt(vec3_dot(_op, _op));
 }
 
+inline float
+vec3_sqrnorm(Vec3_t const& _op)
+{
+    return vec3_dot(_op, _op);
+}
+
 inline Vec3_t
 vec3_normalise(Vec3_t const& _op)
 {
@@ -146,10 +160,24 @@ vec3_float_concat(Vec3_t const& _lhs, float const& _rhs)
     return Vec4_t{ _lhs[0], _lhs[1], _lhs[2], _rhs };
 }
 
+
 inline Vec4_t
 vec4_add(Vec4_t const& _lhs, Vec4_t const& _rhs)
 {
     return Vec4_t{ _lhs[0] + _rhs[0], _lhs[1] + _rhs[1], _lhs[2] + _rhs[2], _lhs[3] + _rhs[3] };
+}
+
+inline Vec4_t
+vec4_sub(Vec4_t const& _lhs, Vec4_t const& _rhs)
+{
+    return Vec4_t{ _lhs[0] - _rhs[0], _lhs[1] - _rhs[1], _lhs[2] - _rhs[2], _lhs[3] - _rhs[3] };
+}
+
+template <typename FT>
+inline Vec4_t
+vec4_unary_op(Vec4_t const& _lhs, FT _op)
+{
+    return Vec4_t{ _op(_lhs[0]), _op(_lhs[1]), _op(_lhs[2]), _op(_lhs[3]) };
 }
 
 inline Vec4_t
@@ -162,6 +190,22 @@ inline float
 vec4_dot(Vec4_t const& _lhs, Vec4_t const& _rhs)
 {
     return _lhs[0]*_rhs[0] + _lhs[1]*_rhs[1] + _lhs[2]*_rhs[2] + _lhs[3]*_rhs[3];
+}
+
+inline float
+vec4_sqrnorm(Vec4_t const& _op)
+{
+    return vec4_dot(_op, _op);
+}
+
+inline Vec3_t
+mat3_vec3_mul(Mat3_t const& _lhs, Vec3_t const& _rhs)
+{
+    return Vec3_t{
+        _lhs[0]*_rhs[0] + _lhs[3]*_rhs[1] + _lhs[6]*_rhs[2],
+        _lhs[1]*_rhs[0] + _lhs[4]*_rhs[1] + _lhs[7]*_rhs[2],
+        _lhs[2]*_rhs[0] + _lhs[5]*_rhs[1] + _lhs[8]*_rhs[2]
+    };
 }
 
 inline Mat4_t

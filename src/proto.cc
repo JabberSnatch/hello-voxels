@@ -65,7 +65,7 @@ struct engine_t
 
     static constexpr unsigned kLog2ChunkSize = 6u;
     static constexpr unsigned kChunkSize = 1u << kLog2ChunkSize;
-    static constexpr int kChunkLoadRadius = 4;
+    static constexpr int kChunkLoadRadius = 2;
     static constexpr float kVoxelScale = .25f;
     using VDB_t = quick_vdb::RootNode< quick_vdb::BranchNode< quick_vdb::BranchNode<
                   quick_vdb::LeafNode<kLog2ChunkSize>, 4u>, 4u>>;
@@ -270,7 +270,44 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
 
                     bool floor = fvoxel_world[1] <= (heightmap[vz + vx*engine_t::kChunkSize] + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f);
                     bool ceil = fvoxel_world[1] >= -heightmap[vz + vx*engine_t::kChunkSize] + 100.f + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
-                    return floor || ceil;
+
+                    bool column = false;
+                    {
+                        static const float freq = 66.f;
+                        static const float hfreq = freq*0.5f;
+                        numtk::Vec3_t repeat{
+                            std::copysign(
+                                std::fmod(std::abs(fvoxel_world[0] + hfreq) + hfreq, freq) - hfreq,
+                                fvoxel_world[0]
+                            ),
+                            std::copysign(
+                                std::fmod(std::abs(fvoxel_world[1] + hfreq) + hfreq, freq) - hfreq,
+                                fvoxel_world[1]
+                            ),
+                            std::copysign(
+                                std::fmod(std::abs(fvoxel_world[2] + hfreq) + hfreq, freq) - hfreq,
+                                fvoxel_world[2]
+                            )
+                        };
+
+                        float theta = std::atan2(repeat[2], repeat[0]);
+                        float distance = std::sqrt(repeat[0] * repeat[0] + repeat[2] * repeat[2]);
+                        float height = std::max(0.f, std::min(100.f, fvoxel_world[1])) / 100.f;
+
+                        const float radius = 7.f;
+                        const float baseheight = 0.075f;
+
+                        if (height < baseheight || height > 1.f - baseheight)
+                        {
+                            column = distance < 9.f + std::sin(theta * 50.f) * 0.4f;
+                        }
+                        else
+                        {
+                            column = distance < 7.f + std::sin(height * numtk::kPi * 3.f) * 0.2f;
+                        }
+                    }
+
+                    return floor || ceil || column;
 
                     return fvoxel_world[1] < (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
                 }(voxel_world);
@@ -865,7 +902,7 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
                                       3.f);
             const numtk::Vec3_t Csky =
                 numtk::vec3_float_mul({ .45f, .5f, .7f },
-                                      std::max(0.f, 1.f));// * std::cos(tt*0.5f) + 0.25f));
+                                      std::max(0.f, 5.f));// * std::cos(tt*0.5f) + 0.25f));
 
             numtk::Vec3_t Li[6];
 

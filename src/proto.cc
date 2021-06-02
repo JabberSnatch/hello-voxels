@@ -204,9 +204,9 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                     numtk::vec3_add(fvoxel_world,
                                     numtk::vec3_constant(0.5f * engine_t::kVoxelScale));
 
-                numtk::Vec3_t p{ fvoxel_world[0], 0.f, fvoxel_world[2] };
+                numtk::Vec3_t p{ fvoxel_world[0] * 0.05f, 0.f, fvoxel_world[2] * 0.05f };
 
-                heightmap[vz + vx*engine_t::kChunkSize] = rng::noise3(&p[0]) * 5.f;
+                heightmap[vz + vx*engine_t::kChunkSize] = rng::noise3(&p[0]) * 20.f;
             }
         }
     }
@@ -268,8 +268,8 @@ void GenerateChunk(engine_t::VDB_t& vdb, numtk::Vec3i64_t const& chunk_base)
                     float radius = numtk::vec3_norm({ fvoxel_world[0], 0.f, fvoxel_world[2] });
                     float otherradius = numtk::vec3_norm({ fvoxel_world[0] - 2.f, 0.f, fvoxel_world[2]+10.f });
 
-                    bool floor = fvoxel_world[1] <= (heightmap[vz + vx*engine_t::kChunkSize] + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f);
-                    bool ceil = fvoxel_world[1] >= -heightmap[vz + vx*engine_t::kChunkSize] + 100.f + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
+                    bool floor = fvoxel_world[1] <= (heightmap[vz + vx*engine_t::kChunkSize]);// + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f);
+                    bool ceil = fvoxel_world[1] >= -heightmap[vz + vx*engine_t::kChunkSize] + 100.f;// + (std::cos(radius*5.f) * 0.5f) + std::cos(otherradius*0.2f) * 4.f;
 
                     bool column = false;
                     {

@@ -40,6 +40,7 @@ extern oglbase::ShaderSources_t const rtvert;
 extern oglbase::ShaderSources_t const rtfrag;
 
 extern oglbase::ShaderSources_t const skytrfrag;
+extern oglbase::ShaderSources_t const skydirfrag;
 
 struct atmosphere_t
 {
@@ -434,48 +435,49 @@ void EngineReload(engine_t* ioEngine)
         constexpr int kTrTexWidth = 256;
         constexpr int kTrTexHeight = 64;
 
+        constexpr int kIrTexWidth = 64;
+        constexpr int kIrTexHeight = 16;
+
+        oglbase::SamplerPtr sampler{};
+        glGenSamplers(1, sampler.get());
+        glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
         oglbase::TexturePtr trtex{};
         glCreateTextures(GL_TEXTURE_2D, 1, trtex.get());
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, trtex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kTrTexWidth, kTrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        oglbase::TexturePtr dirtex{};
+        glCreateTextures(GL_TEXTURE_2D, 1, dirtex.get());
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, dirtex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         oglbase::FBOPtr fbo{};
         glGenFramebuffers(1, fbo.get());
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, trtex, 0);
-
-        GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
-        if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
-            std::cout << "Framebuffer status error : " << fboCheck << std::endl;
-
-        glDrawBuffer(GL_COLOR_ATTACHMENT0);
-
 
         std::string log{};
         oglbase::ShaderPtr vbin = oglbase::CompileShader(GL_VERTEX_SHADER, rtvert, &log);
         std::cout << "Vshader " << log << std::endl;
+
         oglbase::ShaderPtr skytrbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skytrfrag, &log);
         std::cout << "skytr " << log << std::endl;
         oglbase::ProgramPtr skytrprog = oglbase::LinkProgram({ skytrbin, vbin }, &log);
         std::cout << "skytrprog " << log << std::endl;
 
+        oglbase::ShaderPtr skydirbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skydirfrag, &log);
+        std::cout << "skydir " << log << std::endl;
+        oglbase::ProgramPtr skydirprog = oglbase::LinkProgram({ skydirbin, vbin }, &log);
+        std::cout << "skydirprog " << log << std::endl;
+
         oglbase::VAOPtr vao{};
         glGenVertexArrays(1, vao.get());
-
-        numtk::Vec2_t resolution{(float)kTrTexWidth, (float)kTrTexHeight};
-        oglbase::BufferPtr viewportBuffer{};
-        glCreateBuffers(1, viewportBuffer.get());
-        glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
-        glBufferData(GL_UNIFORM_BUFFER,
-                     2 * sizeof(float),
-                     &resolution[0],
-                     GL_STATIC_DRAW);
 
         numtk::Vec3_t lambda{ 610.e-3f, 550.e-3f, 450.e-3f };
 
@@ -515,24 +517,84 @@ void EngineReload(engine_t* ioEngine)
 
         glBindBuffer(GL_UNIFORM_BUFFER, 0u);
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
+        {
+            numtk::Vec2_t resolution{(float)kTrTexWidth, (float)kTrTexHeight};
+            oglbase::BufferPtr viewportBuffer{};
+            glCreateBuffers(1, viewportBuffer.get());
+            glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+            glBufferData(GL_UNIFORM_BUFFER,
+                         2 * sizeof(float),
+                         &resolution[0],
+                         GL_STATIC_DRAW);
 
-        glViewport(0, 0, kTrTexWidth, kTrTexHeight);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, trtex, 0);
 
-        glUseProgram(skytrprog);
+            GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+            if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                std::cout << "Framebuffer status error : " << fboCheck << std::endl;
 
-        //GLuint index = glGetUniformBlockIndex(skytrprog, "ViewportBlock");
-        //glUniformBlockBinding(skytrprog, index, 0u);
-        glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
-        //index = glGetUniformBlockIndex(skytrprog, "AtmosphereBlock");
-        //glUniformBlockBinding(skytrprog, index, 1u);
-        glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
 
-        glBindVertexArray(vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0u);
+            glViewport(0, 0, kTrTexWidth, kTrTexHeight);
+
+            glUseProgram(skytrprog);
+
+            //GLuint index = glGetUniformBlockIndex(skytrprog, "ViewportBlock");
+            //glUniformBlockBinding(skytrprog, index, 0u);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+
+            //index = glGetUniformBlockIndex(skytrprog, "AtmosphereBlock");
+            //glUniformBlockBinding(skytrprog, index, 1u);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0u);
+        }
+
+        {
+            numtk::Vec2_t resolution{(float)kIrTexWidth, (float)kIrTexHeight};
+            oglbase::BufferPtr viewportBuffer{};
+            glCreateBuffers(1, viewportBuffer.get());
+            glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+            glBufferData(GL_UNIFORM_BUFFER,
+                         2 * sizeof(float),
+                         &resolution[0],
+                         GL_STATIC_DRAW);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dirtex, 0);
+
+            GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+            if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                std::cout << "Framebuffer status error : " << fboCheck << std::endl;
+
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+
+            glViewport(0, 0, kIrTexWidth, kIrTexHeight);
+
+            glUseProgram(skydirprog);
+
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+
+            GLuint64 handle = glGetTextureSamplerHandleARB(trtex, sampler);
+            glMakeTextureHandleResidentARB(handle);
+
+            glUniformHandleui64ARB(glGetUniformLocation(skydirprog, "trtex"),
+                                   handle);
+
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0u);
+        }
 
         glUseProgram(0u);
         glBindFramebuffer(GL_FRAMEBUFFER, 0u);
@@ -1200,5 +1262,8 @@ oglbase::ShaderSources_t const rtfrag{
 
 oglbase::ShaderSources_t const skytrfrag{
     #include "transmittance.frag.glsl"
+};
 
+oglbase::ShaderSources_t const skydirfrag{
+    #include "directirradiance.frag.glsl"
 };

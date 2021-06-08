@@ -39,15 +39,19 @@ constexpr bool kFragmentPipeline = true;
 extern oglbase::ShaderSources_t const rtvert;
 extern oglbase::ShaderSources_t const rtfrag;
 
+extern oglbase::ShaderSources_t const layeredgeom;
+
 extern oglbase::ShaderSources_t const skytrfrag;
 extern oglbase::ShaderSources_t const skydirfrag;
+extern oglbase::ShaderSources_t const skysscatfrag;
 
 struct atmosphere_t
 {
     numtk::Vec3_t sun_irradiance;
     float sun_angular_radius;
     numtk::Vec2_t bounds;
-    numtk::Vec2_t padding;
+    float mus_min;
+    float padding;
     numtk::Vec4_t rscat;
     numtk::Vec4_t mext;
     float odensity[8];
@@ -438,6 +442,15 @@ void EngineReload(engine_t* ioEngine)
         constexpr int kIrTexWidth = 64;
         constexpr int kIrTexHeight = 16;
 
+        constexpr int kScRSize = 32;
+        constexpr int kScMuVSize = 128;
+        constexpr int kScMuSSize = 32;
+        constexpr int kScNuSize = 8;
+
+        constexpr int kScTexWidth = kScNuSize * kScMuSSize;
+        constexpr int kScTexHeight = kScMuVSize;
+        constexpr int kScTexDepth = kScRSize;
+
         oglbase::SamplerPtr sampler{};
         glGenSamplers(1, sampler.get());
         glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -447,17 +460,33 @@ void EngineReload(engine_t* ioEngine)
 
         oglbase::TexturePtr trtex{};
         glCreateTextures(GL_TEXTURE_2D, 1, trtex.get());
-        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, trtex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kTrTexWidth, kTrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         oglbase::TexturePtr dirtex{};
         glCreateTextures(GL_TEXTURE_2D, 1, dirtex.get());
-        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, dirtex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        oglbase::TexturePtr sctex{};
+        glCreateTextures(GL_TEXTURE_3D, 1, sctex.get());
+        glBindTexture(GL_TEXTURE_3D, sctex);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_3D, 0);
+
+        oglbase::TexturePtr drsctex{};
+        glCreateTextures(GL_TEXTURE_3D, 1, drsctex.get());
+        glBindTexture(GL_TEXTURE_3D, drsctex);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_3D, 0);
+
+        oglbase::TexturePtr dmsctex{};
+        glCreateTextures(GL_TEXTURE_3D, 1, dmsctex.get());
+        glBindTexture(GL_TEXTURE_3D, dmsctex);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_3D, 0);
 
         oglbase::FBOPtr fbo{};
         glGenFramebuffers(1, fbo.get());
@@ -465,6 +494,8 @@ void EngineReload(engine_t* ioEngine)
         std::string log{};
         oglbase::ShaderPtr vbin = oglbase::CompileShader(GL_VERTEX_SHADER, rtvert, &log);
         std::cout << "Vshader " << log << std::endl;
+        oglbase::ShaderPtr gbin = oglbase::CompileShader(GL_GEOMETRY_SHADER, layeredgeom, &log);
+        std::cout << "Gshader " << log << std::endl;
 
         oglbase::ShaderPtr skytrbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skytrfrag, &log);
         std::cout << "skytr " << log << std::endl;
@@ -475,6 +506,11 @@ void EngineReload(engine_t* ioEngine)
         std::cout << "skydir " << log << std::endl;
         oglbase::ProgramPtr skydirprog = oglbase::LinkProgram({ skydirbin, vbin }, &log);
         std::cout << "skydirprog " << log << std::endl;
+
+        oglbase::ShaderPtr skysscatbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skysscatfrag, &log);
+        std::cout << "skysscat " << log << std::endl;
+        oglbase::ProgramPtr skysscatprog = oglbase::LinkProgram({ skysscatbin, vbin, gbin }, &log);
+        std::cout << "skysscatprog " << log << std::endl;
 
         oglbase::VAOPtr vao{};
         glGenVertexArrays(1, vao.get());
@@ -500,7 +536,8 @@ void EngineReload(engine_t* ioEngine)
             { 1.f, 1.f, 1.f },//numtk::Vec3_t sun_irradiance;
             .00935f * .5f,//float sun_angular_radius;
             { 6.36e6f, 6.42e6f },//numtk::Vec2_t bounds;
-            numtk::Vec2_t{},
+            std::cos(102.f * (numtk::kPi / 180.f)),
+            0.f,
             rscat, mext,
             { 1.f / 1.5e4f, -2.f / 3.f, 0.f, 0.f, -1.f / 1.5e4f, 8.f / 3.f, 0.f, 0.f },//float odensity[4];
             oext
@@ -594,6 +631,67 @@ void EngineReload(engine_t* ioEngine)
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0u);
+
+            glMakeTextureHandleNonResidentARB(handle);
+        }
+
+        {
+            numtk::Vec4_t const resolution{
+                (float)kScNuSize, (float)kScMuSSize, (float)kScMuVSize, (float)kScRSize
+            };
+
+            oglbase::BufferPtr viewportBuffer{};
+            glCreateBuffers(1, viewportBuffer.get());
+            glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+            glBufferData(GL_UNIFORM_BUFFER,
+                         4 * sizeof(float),
+                         &resolution[0],
+                         GL_STATIC_DRAW);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, drsctex, 0);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, dmsctex, 0);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, sctex, 0);
+
+            GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+            if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                std::cout << "Framebuffer status error : " << fboCheck << std::endl;
+
+            GLuint const draw_buffers[3] {
+                GL_COLOR_ATTACHMENT0,
+                GL_COLOR_ATTACHMENT1,
+                GL_COLOR_ATTACHMENT2,
+            };
+
+            glDrawBuffers(3, draw_buffers);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+
+            glViewport(0, 0, kScTexWidth, kScTexHeight);
+
+            glUseProgram(skysscatprog);
+
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+
+            GLuint64 handle = glGetTextureSamplerHandleARB(trtex, sampler);
+            glMakeTextureHandleResidentARB(handle);
+
+            glUniformHandleui64ARB(glGetUniformLocation(skysscatprog, "trtex"),
+                                   handle);
+
+            glBindVertexArray(vao);
+            for (int i = 0; i < kScTexDepth; ++i)
+            {
+                glUniform1f(glGetUniformLocation(skysscatprog, "layer"),
+                            (float)i);
+
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+            glBindVertexArray(0u);
+
+            glMakeTextureHandleNonResidentARB(handle);
         }
 
         glUseProgram(0u);
@@ -1260,10 +1358,32 @@ oglbase::ShaderSources_t const rtfrag{
     #include "voxeltraversal.frag.glsl"
 };
 
+oglbase::ShaderSources_t const layeredgeom{ R"__lstr__(
+#version 430 core
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+uniform float layer;
+void main() {
+gl_Position = gl_in[0].gl_Position;
+gl_Layer = int(layer);
+EmitVertex();
+gl_Position = gl_in[1].gl_Position;
+gl_Layer = int(layer);
+EmitVertex();
+gl_Position = gl_in[2].gl_Position;
+gl_Layer = int(layer);
+EmitVertex();
+}
+)__lstr__" };
+
 oglbase::ShaderSources_t const skytrfrag{
     #include "transmittance.frag.glsl"
 };
 
 oglbase::ShaderSources_t const skydirfrag{
     #include "directirradiance.frag.glsl"
+};
+
+oglbase::ShaderSources_t const skysscatfrag{
+    #include "singlescattering.frag.glsl"
 };

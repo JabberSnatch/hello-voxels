@@ -89,8 +89,24 @@ vec4 ScatteringTexCoordstoRMuVMuSNu(vec4 texCoords)
         : clamp((Hsqr - d*d) / (2.0 * atmos.bounds[0] * d), -1.0, 1.0);
 
     float nu = texCoords.x * 2.0 - 1.0;
+    nu = clamp(nu,
+               muv * mus - sqrt((1.0 - muv * muv) * (1.0 - mus * mus)),
+               muv * mus + sqrt((1.0 - muv * muv) * (1.0 - mus * mus)));
 
     return vec4(r, muv, mus, nu);
+}
+
+vec2 TransmittanceRMutoUV(vec2 radius_bounds, float r, float mu)
+{
+    vec2 boundssqr = radius_bounds * radius_bounds;
+    float H = sqrt(boundssqr[1] - boundssqr[0]);
+    float rho = sqrt(max(0.0, r*r - boundssqr[0]));
+    float d = BoundaryDistance(radius_bounds[1], r, mu);
+    float d_min = radius_bounds[1] - r;
+    float d_max = rho + H;
+    float u = (d - d_min) / (d_max - d_min);
+    float v = rho / H;
+    return vec2(u, v);
 }
 
 void main()
@@ -102,8 +118,48 @@ void main()
         vec4(viewport.nu - 1, viewport.mus, viewport.muv, viewport.r);
 
     vec4 rmuvmusnu = ScatteringTexCoordstoRMuVMuSNu(texCoords);
+    float ray_outbound = (texCoords.z < 0.5) ? -atmos.bounds[0] : atmos.bounds[1];
 
-    scattering = rmuvmusnu;
+    const float kSampleCount = 64.0;
+    float r = rmuvmusnu.x;
+    float muv = rmuvmusnu.y;
+    float mus = rmuvmusnu.z;
+    float nu = rmuvmusnu.w;
+
+    float dx = BoundaryDistance(r, muv, ray_outbound) / kSampleCount;
+    vec3 rayleigh_sum = vec3(0.0);
+    vec3 mie_sum = vec3(0.0);
+    vec3 trs_sum = vec3(0.0);
+    for (float i = 0.0; i <= kSampleCount; i += 1.0)
+    {
+        float weight = (i == 0.0 || i >= kSampleCount) ? 0.5 : 1.0;
+
+        float t = i * dx;
+        float rt = clamp(sqrt(t*t + 2.0*r*muv*t + r*r),
+                         atmos.bounds[0], atmos.bounds[1]);
+        float must = clamp((r*mus + t*nu) / rt, -1.0, 1.0);
+
+        vec3 tr0 = texture(trtex,
+                           TransmittanceRMutoUV(atmos.bounds, rt, sign(ray_outbound)*must)).xyz;
+        vec3 tr1 = texture(trtex,
+                           TransmittanceRMutoUV(atmos.bounds, r, sign(ray_outbound)*muv)).xyz;
+
+        vec3 tr = min((ray_outbound < 0) ? (tr0 / tr1) : (tr1 / tr0), vec3(1.0));
+
+        float sin_theta = atmos.bounds[0] / rt;
+        float cos_theta = -sqrt(max(1.0 - sin_theta*sin_theta, 0.0));
+        vec3 trs = texture(trtex,
+                           TransmittanceRMutoUV(atmos.bounds, rt, must)).xyz
+            * smoothstep(-sin_theta * atmos.sun_angular_radius,
+                         sin_theta * atmos.sun_angular_radius,
+                         must - cos_theta);
+
+        rayleigh_sum += weight * tr * trs * exp(atmos.rscat.w * (rt - atmos.bounds[0]));
+        mie_sum += weight * tr * trs * exp(atmos.mext.w * (rt - atmos.bounds[0]));
+    }
+
+    rayleigh = rayleigh_sum * dx * atmos.sun_irradiance * atmos.rscat.xyz;
+    mie = mie_sum * dx * atmos.sun_irradiance * atmos.mext.xyz;
+    scattering = vec4(rayleigh, mie.x);
 }
-
 )__lstr__"

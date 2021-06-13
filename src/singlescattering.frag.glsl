@@ -45,7 +45,7 @@ layout(std140, binding = 1) uniform AtmosphereBlock
 float BoundaryDistance(float boundary_radius, float r, float mu)
 {
     float delta = r*r * (mu*mu - 1.0) + boundary_radius*boundary_radius;
-    return max(-r * mu + sqrt(max(delta, 0.0)), 0.0);
+    return max(-r * mu + sign(boundary_radius) * sqrt(max(delta, 0.0)), 0.0);
 }
 
 vec4 ScatteringTexCoordstoRMuVMuSNu(vec4 texCoords)
@@ -111,8 +111,8 @@ vec2 TransmittanceRMutoUV(vec2 radius_bounds, float r, float mu)
 
 void main()
 {
-    vec4 texCoords = vec4(gl_FragCoord.x / viewport.mus,
-                          mod(gl_FragCoord.x, viewport.mus),
+    vec4 texCoords = vec4(floor(float(gl_FragCoord.x) / viewport.mus),
+                          mod(float(gl_FragCoord.x), viewport.mus),
                           gl_FragCoord.y,
                           layer + 0.5) /
         vec4(viewport.nu - 1, viewport.mus, viewport.muv, viewport.r);
@@ -126,7 +126,7 @@ void main()
     float mus = rmuvmusnu.z;
     float nu = rmuvmusnu.w;
 
-    float dx = BoundaryDistance(r, muv, ray_outbound) / kSampleCount;
+    float dx = BoundaryDistance(ray_outbound, r, muv) / kSampleCount;
     vec3 rayleigh_sum = vec3(0.0);
     vec3 mie_sum = vec3(0.0);
     vec3 trs_sum = vec3(0.0);
@@ -160,6 +160,7 @@ void main()
 
     rayleigh = rayleigh_sum * dx * atmos.sun_irradiance * atmos.rscat.xyz;
     mie = mie_sum * dx * atmos.sun_irradiance * atmos.mext.xyz;
+
     scattering = vec4(rayleigh, mie.x);
 }
 )__lstr__"

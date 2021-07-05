@@ -33,16 +33,16 @@ layout(std140, binding = 1) uniform AtmosphereBlock
 
 } atmos;
 
-float BoundaryDistance(float boundary_radius, float r, float mu)
+float ExtBoundaryDistance(float r, float mu)
 {
-    float delta = r*r * (mu*mu - 1.0) + boundary_radius*boundary_radius;
+    float delta = r*r * (mu*mu - 1.0) + atmos.bounds[1]*atmos.bounds[1];
     return max(-r * mu + sqrt(max(delta, 0.0)), 0.0);
 }
 
 float OpticalLengthExpo(float scale, float r, float mu)
 {
     const float kSampleCount = 512.0;
-    float dx = BoundaryDistance(atmos.bounds[1], r, mu) / kSampleCount;
+    float dx = ExtBoundaryDistance(r, mu) / kSampleCount;
     float result = 0.0;
     for (float i = 0.0; i <= kSampleCount; i += 1.0)
     {
@@ -58,7 +58,7 @@ float OpticalLengthExpo(float scale, float r, float mu)
 float OpticalLengthLinear(LinearLayer density[2], float bound, float r, float mu)
 {
     const float kSampleCount = 512.0;
-    float dx = BoundaryDistance(atmos.bounds[1], r, mu) / kSampleCount;
+    float dx = ExtBoundaryDistance(r, mu) / kSampleCount;
     float result = 0.0;
     for (float i = 0.0; i <= kSampleCount; i += 1.0)
     {

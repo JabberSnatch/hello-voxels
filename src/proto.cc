@@ -44,6 +44,7 @@ extern oglbase::ShaderSources_t const layeredgeom;
 extern oglbase::ShaderSources_t const skytrfrag;
 extern oglbase::ShaderSources_t const skydirfrag;
 extern oglbase::ShaderSources_t const skysscatfrag;
+extern oglbase::ShaderSources_t const skyscatdfrag;
 
 struct atmosphere_t
 {
@@ -436,6 +437,8 @@ void EngineReload(engine_t* ioEngine)
         chunk.base = { engine_t::kInvalidChunkIndex };
 
     {
+        // Precomputed Atmospheric Scattering (Bruneton & Neyret, 2008)
+
         constexpr int kTrTexWidth = 256;
         constexpr int kTrTexHeight = 64;
 
@@ -488,6 +491,18 @@ void EngineReload(engine_t* ioEngine)
         glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_3D, 0);
 
+        oglbase::TexturePtr dscdtex{};
+        glCreateTextures(GL_TEXTURE_3D, 1, dscdtex.get());
+        glBindTexture(GL_TEXTURE_3D, dscdtex);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_3D, 0);
+
+        oglbase::TexturePtr msctex{}; // Can be set to reuse drsctex rather than get its own alloc.
+        glCreateTextures(GL_TEXTURE_3D, 1, msctex.get());
+        glBindTexture(GL_TEXTURE_3D, msctex);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_3D, 0);
+
         oglbase::FBOPtr fbo{};
         glGenFramebuffers(1, fbo.get());
 
@@ -511,6 +526,11 @@ void EngineReload(engine_t* ioEngine)
         std::cout << "skysscat " << log << std::endl;
         oglbase::ProgramPtr skysscatprog = oglbase::LinkProgram({ skysscatbin, vbin, gbin }, &log);
         std::cout << "skysscatprog " << log << std::endl;
+
+        oglbase::ShaderPtr skyscatdbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skyscatdfrag, &log);
+        std::cout << "skyscatd " << log << std::endl;
+        oglbase::ProgramPtr skyscatdprog = oglbase::LinkProgram({ skyscatdbin, vbin, gbin }, &log);
+        std::cout << "skyscatdprog " << log << std::endl;
 
         oglbase::VAOPtr vao{};
         glGenVertexArrays(1, vao.get());
@@ -692,6 +712,92 @@ void EngineReload(engine_t* ioEngine)
             glBindVertexArray(0u);
 
             glMakeTextureHandleNonResidentARB(handle);
+        }
+
+        for (unsigned order = 2; order <= 4; ++order)
+        {
+            { // scattering density
+                numtk::Vec4_t const resolution{
+                    (float)kScNuSize, (float)kScMuSSize, (float)kScMuVSize, (float)kScRSize
+                };
+
+                oglbase::BufferPtr viewportBuffer{};
+                glCreateBuffers(1, viewportBuffer.get());
+                glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+                glBufferData(GL_UNIFORM_BUFFER,
+                             4 * sizeof(float),
+                             &resolution[0],
+                             GL_STATIC_DRAW);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dscdtex, 0);
+                glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+                glDisable(GL_DEPTH_TEST);
+                glDisable(GL_BLEND);
+
+                glViewport(0, 0, kScTexWidth, kScTexHeight);
+
+                glUseProgram(skyscatdprog);
+
+                GLuint64 trhandle = glGetTextureSamplerHandleARB(trtex, sampler);
+                glMakeTextureHandleResidentARB(trhandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyscatdprog, "trtex"),
+                                       trhandle);
+
+                GLuint64 drschandle = glGetTextureSamplerHandleARB(drsctex, sampler);
+                GLuint64 dmschandle = glGetTextureSamplerHandleARB(dmsctex, sampler);
+                GLuint64 mschandle = glGetTextureSamplerHandleARB(msctex, sampler);
+
+                glMakeTextureHandleResidentARB(drschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyscatdprog, "drsctex"),
+                                       drschandle);
+
+                glMakeTextureHandleResidentARB(dmschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyscatdprog, "dmsctex"),
+                                       dmschandle);
+
+                glMakeTextureHandleResidentARB(mschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyscatdprog, "msctex"),
+                                       mschandle);
+
+                GLuint64 dirhandle = glGetTextureSamplerHandleARB(dirtex, sampler);
+                glMakeTextureHandleResidentARB(dirhandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyscatdprog, "dirtex"),
+                                       dirhandle);
+
+                glUniform1f(glGetUniformLocation(skyscatdprog, "scatorder"),
+                            (float)order);
+
+                glBindVertexArray(vao);
+                for (int i = 0; i < kScTexDepth; ++i)
+                {
+                    glUniform1f(glGetUniformLocation(skyscatdprog, "layer"),
+                                (float)i);
+
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                }
+                glBindVertexArray(0u);
+
+                glMakeTextureHandleNonResidentARB(trhandle);
+                if (order == 2)
+                {
+                    glMakeTextureHandleNonResidentARB(drschandle);
+                    glMakeTextureHandleNonResidentARB(dmschandle);
+                }
+                else
+                {
+                    glMakeTextureHandleNonResidentARB(mschandle);
+                }
+
+                glMakeTextureHandleNonResidentARB(dirhandle);
+            }
+
+            { // indirect irradiance
+            }
+
+            { // multiple scattering
+            }
         }
 
         glUseProgram(0u);
@@ -1386,4 +1492,8 @@ oglbase::ShaderSources_t const skydirfrag{
 
 oglbase::ShaderSources_t const skysscatfrag{
     #include "singlescattering.frag.glsl"
+};
+
+oglbase::ShaderSources_t const skyscatdfrag{
+    #include "scatteringdensity.frag.glsl"
 };

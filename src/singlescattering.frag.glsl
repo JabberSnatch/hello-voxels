@@ -135,17 +135,21 @@ void main()
         float weight = (i == 0.0 || i >= kSampleCount) ? 0.5 : 1.0;
 
         float t = i * dx;
+
         float rt = clamp(sqrt(t*t + 2.0*r*muv*t + r*r),
                          atmos.bounds[0], atmos.bounds[1]);
-        float must = clamp((r*mus + t*nu) / rt, -1.0, 1.0);
 
+        // Transmittance(r, mu, t)
+        float muvt = clamp((r * muv + t) / rt, -1.0, 1.0);
         vec3 tr0 = texture(trtex,
-                           TransmittanceRMutoUV(atmos.bounds, rt, sign(ray_outbound)*must)).xyz;
+                           TransmittanceRMutoUV(atmos.bounds, rt, sign(ray_outbound)*muvt)).xyz;
         vec3 tr1 = texture(trtex,
                            TransmittanceRMutoUV(atmos.bounds, r, sign(ray_outbound)*muv)).xyz;
 
         vec3 tr = min((ray_outbound < 0) ? (tr0 / tr1) : (tr1 / tr0), vec3(1.0));
 
+        // TransmittanceSun(r, mu)
+        float must = clamp((r*mus + t*nu) / rt, -1.0, 1.0);
         float sin_theta = atmos.bounds[0] / rt;
         float cos_theta = -sqrt(max(1.0 - sin_theta*sin_theta, 0.0));
         vec3 trs = texture(trtex,

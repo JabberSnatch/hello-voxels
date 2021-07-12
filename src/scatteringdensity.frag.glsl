@@ -57,7 +57,7 @@ float MiePhaseFunction(float g, float cos_mu)
     float gsqr = g*g;
     float t0 = 3.0 / (8.0 * kPi);
     float t1 = (1.0 - gsqr) / (2.0 + gsqr);
-    float t2 = (1.0 * cos_mu*cos_mu) / pow(1.0 * gsqr - 2.0 * g * cos_mu, 1.5);
+    float t2 = (1.0 + cos_mu*cos_mu) / pow(1.0 + gsqr - 2.0 * g * cos_mu, 1.5);
     return t0*t1*t2;
 }
 
@@ -236,7 +236,6 @@ void main()
         vec4(viewport.nu - 1, viewport.mus, viewport.muv, viewport.r);
 
     vec4 rmuvmusnu = ScatteringTexCoordstoRMuVMuSNu(texCoords);
-    float ray_outbound = (texCoords.z < 0.5) ? -atmos.bounds[0] : atmos.bounds[1];
 
     float r = rmuvmusnu.x;
     float muv = rmuvmusnu.y;
@@ -304,9 +303,10 @@ void main()
             float mie_density = exp(atmos.mext.w * altitude);
 
             float dsampledir = dtheta * dphi * sin_theta;
+
             scatdensity += Li * (atmos.rscat.xyz * rayleigh_density * RayleighPhaseFunction(nu1)
                                  + atmos.mext.xyz * mie_density * MiePhaseFunction(kMieG, nu1))
-                * dsampledir;
+                                 * dsampledir;
         }
     }
 

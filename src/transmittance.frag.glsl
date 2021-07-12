@@ -81,15 +81,15 @@ vec3 Transmittance(float r, float mu)
     return exp(-(rayleigh_term + mie_term + absorp_term));
 }
 
-vec2 TransmittanceUVtoRMu(vec2 radius_bounds, vec2 uv)
+vec2 TransmittanceUVtoRMu(vec2 uv)
 {
-    vec2 boundssqr = radius_bounds * radius_bounds;
+    vec2 boundssqr = atmos.bounds * atmos.bounds;
     float Hsqr = boundssqr[1] - boundssqr[0];
     float H = sqrt(Hsqr);
     float rho = H * uv[1];
     float rhosqr = rho*rho;
     float r = sqrt(rhosqr + boundssqr[0]);
-    float d_min = radius_bounds[1] - r;
+    float d_min = atmos.bounds[1] - r;
     float d_max = rho + H;
     float d = d_min + uv[0] * (d_max - d_min);
     float mu = (abs(d) < 0.0001)
@@ -100,7 +100,7 @@ vec2 TransmittanceUVtoRMu(vec2 radius_bounds, vec2 uv)
 
 void main() {
     vec2 uv = vec2(gl_FragCoord) / viewport.resolution;
-    vec2 rmu = TransmittanceUVtoRMu(atmos.bounds, uv);
+    vec2 rmu = TransmittanceUVtoRMu(uv);
     transmittance = Transmittance(rmu.x, rmu.y);
 }
 

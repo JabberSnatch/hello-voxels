@@ -48,6 +48,12 @@ float BoundaryDistance(float boundary_radius, float r, float mu)
     return max(-r * mu + sign(boundary_radius) * sqrt(max(delta, 0.0)), 0.0);
 }
 
+float ExtBoundaryDistance(float r, float mu)
+{
+    float delta = r*r * (mu*mu - 1.0) + atmos.bounds[1]*atmos.bounds[1];
+    return max(-r * mu + sqrt(max(delta, 0.0)), 0.0);
+}
+
 vec4 ScatteringTexCoordstoRMuVMuSNu(vec4 texCoords)
 {
     vec2 boundssqr = atmos.bounds * atmos.bounds;
@@ -79,7 +85,7 @@ vec4 ScatteringTexCoordstoRMuVMuSNu(vec4 texCoords)
 
     float d_min = atmos.bounds[1] - atmos.bounds[0];
     float d_max = H;
-    float D = BoundaryDistance(atmos.bounds[1], atmos.bounds[0], atmos.mus_min);
+    float D = ExtBoundaryDistance(atmos.bounds[0], atmos.mus_min);
     float A = (D - d_min) / (d_max - d_min);
     float a = (A - texCoords.y * A) / (1.0 + texCoords.y * A);
     float d = d_min + min(a, A) * (d_max - d_min);
@@ -96,16 +102,17 @@ vec4 ScatteringTexCoordstoRMuVMuSNu(vec4 texCoords)
     return vec4(r, muv, mus, nu);
 }
 
-vec2 TransmittanceRMutoUV(vec2 radius_bounds, float r, float mu)
+vec2 TransmittanceRMutoUV(float r, float mu)
 {
-    vec2 boundssqr = radius_bounds * radius_bounds;
+    vec2 boundssqr = atmos.bounds * atmos.bounds;
     float H = sqrt(boundssqr[1] - boundssqr[0]);
     float rho = sqrt(max(0.0, r*r - boundssqr[0]));
-    float d = BoundaryDistance(radius_bounds[1], r, mu);
-    float d_min = radius_bounds[1] - r;
+    float d = ExtBoundaryDistance(r, mu);
+    float d_min = atmos.bounds[1] - r;
     float d_max = rho + H;
     float u = (d - d_min) / (d_max - d_min);
     float v = rho / H;
+
     return vec2(u, v);
 }
 
@@ -142,9 +149,9 @@ void main()
         // Transmittance(r, mu, t)
         float muvt = clamp((r * muv + t) / rt, -1.0, 1.0);
         vec3 tr0 = texture(trtex,
-                           TransmittanceRMutoUV(atmos.bounds, rt, sign(ray_outbound)*muvt)).xyz;
+                           TransmittanceRMutoUV(rt, sign(ray_outbound)*muvt)).xyz;
         vec3 tr1 = texture(trtex,
-                           TransmittanceRMutoUV(atmos.bounds, r, sign(ray_outbound)*muv)).xyz;
+                           TransmittanceRMutoUV(r, sign(ray_outbound)*muv)).xyz;
 
         vec3 tr = min((ray_outbound < 0) ? (tr0 / tr1) : (tr1 / tr0), vec3(1.0));
 
@@ -153,7 +160,7 @@ void main()
         float sin_theta = atmos.bounds[0] / rt;
         float cos_theta = -sqrt(max(1.0 - sin_theta*sin_theta, 0.0));
         vec3 trs = texture(trtex,
-                           TransmittanceRMutoUV(atmos.bounds, rt, must)).xyz
+                           TransmittanceRMutoUV(rt, must)).xyz
             * smoothstep(-sin_theta * atmos.sun_angular_radius,
                          sin_theta * atmos.sun_angular_radius,
                          must - cos_theta);
@@ -165,6 +172,6 @@ void main()
     rayleigh = rayleigh_sum * dx * atmos.sun_irradiance * atmos.rscat.xyz;
     mie = mie_sum * dx * atmos.sun_irradiance * atmos.mext.xyz;
 
-    scattering = vec4(rayleigh, mie.x);
+    scattering = vec4(rayleigh, mie.r);
 }
 )__lstr__"

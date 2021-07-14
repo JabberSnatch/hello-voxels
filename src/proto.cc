@@ -46,6 +46,7 @@ extern oglbase::ShaderSources_t const skydirfrag;
 extern oglbase::ShaderSources_t const skysscatfrag;
 extern oglbase::ShaderSources_t const skyscatdfrag;
 extern oglbase::ShaderSources_t const skyiirfrag;
+extern oglbase::ShaderSources_t const skymscatfrag;
 
 struct atmosphere_t
 {
@@ -544,6 +545,11 @@ void EngineReload(engine_t* ioEngine)
         oglbase::ProgramPtr skyiirprog = oglbase::LinkProgram({ skyiirbin, vbin }, &log);
         std::cout << "skyiirprog " << log << std::endl;
 
+        oglbase::ShaderPtr skymscatbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skymscatfrag, &log);
+        std::cout << "skymscat " << log << std::endl;
+        oglbase::ProgramPtr skymscatprog = oglbase::LinkProgram({ skymscatbin, vbin, gbin }, &log);
+        std::cout << "skymscatprog " << log << std::endl;
+
         oglbase::VAOPtr vao{};
         glGenVertexArrays(1, vao.get());
 
@@ -886,6 +892,73 @@ void EngineReload(engine_t* ioEngine)
             }
 
             { // multiple scattering
+                numtk::Vec4_t const resolution{
+                    (float)kScNuSize, (float)kScMuSSize, (float)kScMuVSize, (float)kScRSize
+                };
+
+                oglbase::BufferPtr viewportBuffer{};
+                glCreateBuffers(1, viewportBuffer.get());
+                glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+                glBufferData(GL_UNIFORM_BUFFER,
+                             4 * sizeof(float),
+                             &resolution[0],
+                             GL_STATIC_DRAW);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, msctex, 0);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, sctex, 0);
+
+                static GLuint const draw_buffers[2] {
+                    GL_COLOR_ATTACHMENT0,
+                    GL_COLOR_ATTACHMENT1,
+                };
+
+                glDrawBuffers(2, draw_buffers);
+
+                GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+                if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                    std::cout << "Framebuffer status error : " << fboCheck << std::endl;
+
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_ONE, GL_ONE);
+
+                glDisablei(GL_BLEND, 0);
+                glEnablei(GL_BLEND, 1);
+
+                glDisable(GL_DEPTH_TEST);
+
+                glViewport(0, 0, kScTexWidth, kScTexHeight);
+
+                glUseProgram(skymscatprog);
+
+                glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+                glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+
+                GLuint64 trhandle = glGetTextureSamplerHandleARB(trtex, sampler);
+                glMakeTextureHandleResidentARB(trhandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skymscatprog, "trtex"),
+                                       trhandle);
+
+                GLuint64 dscdhandle = glGetTextureSamplerHandleARB(dscdtex, sampler);
+                glMakeTextureHandleResidentARB(dscdhandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skymscatprog, "dscdtex"),
+                                       dscdhandle);
+
+                glBindVertexArray(vao);
+                for (int i = 0; i < kScTexDepth; ++i)
+                {
+                    glUniform1f(glGetUniformLocation(skymscatprog, "layer"),
+                                (float)i);
+
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                }
+                glBindVertexArray(0u);
+
+                glMakeTextureHandleNonResidentARB(trhandle);
+                glMakeTextureHandleNonResidentARB(dscdhandle);
+
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_NONE, 0);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_NONE, 0);
             }
         }
 
@@ -1539,12 +1612,12 @@ lambda, K, S0, S1, S2, SunRad, ko, kwa, kg
 oglbase::ShaderSources_t const rtvert{ "#version 430 core\n", R"__lstr__(
 
             const vec2 kTriVertices[] = vec2[3](
-	            vec2(-1.0, 3.0), vec2(-1.0, -1.0), vec2(3.0, -1.0)
+                vec2(-1.0, 3.0), vec2(-1.0, -1.0), vec2(3.0, -1.0)
             );
 
             void main()
             {
-	            gl_Position = vec4(kTriVertices[gl_VertexID], 0.0, 1.0);
+                gl_Position = vec4(kTriVertices[gl_VertexID], 0.0, 1.0);
             }
 
         )__lstr__"};
@@ -1589,4 +1662,8 @@ oglbase::ShaderSources_t const skyscatdfrag{
 
 oglbase::ShaderSources_t const skyiirfrag{
     #include "indirectirradiance.frag.glsl"
+};
+
+oglbase::ShaderSources_t const skymscatfrag{
+    #include "multiplescattering.frag.glsl"
 };

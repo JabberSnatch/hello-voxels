@@ -41,41 +41,39 @@ vec2 IrradianceUVtoRMu(vec2 radius_bounds, vec2 uv)
     return vec2(r, mu);
 }
 
-float BoundaryDistance(float boundary_radius, float r, float mu)
+float ExtBoundaryDistance(float r, float mu)
 {
-    float delta = r*r * (mu*mu - 1.0) + boundary_radius*boundary_radius;
+    float delta = r*r * (mu*mu - 1.0) + atmos.bounds[1]*atmos.bounds[1];
     return max(-r * mu + sqrt(max(delta, 0.0)), 0.0);
 }
 
-vec2 TransmittanceRMutoUV(vec2 radius_bounds, float r, float mu)
+vec2 TransmittanceRMutoUV(float r, float mu)
 {
-    vec2 boundssqr = radius_bounds * radius_bounds;
+    vec2 boundssqr = atmos.bounds * atmos.bounds;
     float H = sqrt(boundssqr[1] - boundssqr[0]);
     float rho = sqrt(max(0.0, r*r - boundssqr[0]));
-    float d = BoundaryDistance(radius_bounds[1], r, mu);
-    float d_min = radius_bounds[1] - r;
+    float d = ExtBoundaryDistance(r, mu);
+    float d_min = atmos.bounds[1] - r;
     float d_max = rho + H;
     float u = (d - d_min) / (d_max - d_min);
     float v = rho / H;
     return vec2(u, v);
 }
 
-vec3 DirectIrradiance(float r, float mu)
+void main()
 {
+    vec2 rmu = IrradianceUVtoRMu(atmos.bounds, vec2(gl_FragCoord) / viewport.resolution);
+
+    float r = rmu.x;
+    float mu = rmu.y;
+
     float sun_edge = mu + atmos.sun_angular_radius;
     float average_cosine_factor =
         max(0.0, min(mu, (sun_edge * sun_edge) / (4.0 * atmos.sun_angular_radius)));
 
-    vec2 uv = TransmittanceRMutoUV(atmos.bounds, r, mu);
+    vec2 uv = TransmittanceRMutoUV(r, mu);
 
-    return atmos.sun_irradiance * average_cosine_factor * texture(trtex, uv).xyz;
-}
-
-void main()
-{
-    vec2 uv = vec2(gl_FragCoord) / viewport.resolution;
-    vec2 rmu = IrradianceUVtoRMu(atmos.bounds, uv);
-    delta_irradiance = DirectIrradiance(rmu.x, rmu.y);
+    delta_irradiance = atmos.sun_irradiance * average_cosine_factor * texture(trtex, uv).xyz;
 }
 
 )__lstr__"

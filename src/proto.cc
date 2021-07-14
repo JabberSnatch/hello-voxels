@@ -45,6 +45,7 @@ extern oglbase::ShaderSources_t const skytrfrag;
 extern oglbase::ShaderSources_t const skydirfrag;
 extern oglbase::ShaderSources_t const skysscatfrag;
 extern oglbase::ShaderSources_t const skyscatdfrag;
+extern oglbase::ShaderSources_t const skyiirfrag;
 
 struct atmosphere_t
 {
@@ -473,6 +474,12 @@ void EngineReload(engine_t* ioEngine)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
+        oglbase::TexturePtr iirtex{};
+        glCreateTextures(GL_TEXTURE_2D, 1, iirtex.get());
+        glBindTexture(GL_TEXTURE_2D, iirtex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
         oglbase::TexturePtr sctex{};
         glCreateTextures(GL_TEXTURE_3D, 1, sctex.get());
         glBindTexture(GL_TEXTURE_3D, sctex);
@@ -532,6 +539,11 @@ void EngineReload(engine_t* ioEngine)
         oglbase::ProgramPtr skyscatdprog = oglbase::LinkProgram({ skyscatdbin, vbin, gbin }, &log);
         std::cout << "skyscatdprog " << log << std::endl;
 
+        oglbase::ShaderPtr skyiirbin = oglbase::CompileShader(GL_FRAGMENT_SHADER, skyiirfrag, &log);
+        std::cout << "skyiir " << log << std::endl;
+        oglbase::ProgramPtr skyiirprog = oglbase::LinkProgram({ skyiirbin, vbin }, &log);
+        std::cout << "skyiirprog " << log << std::endl;
+
         oglbase::VAOPtr vao{};
         glGenVertexArrays(1, vao.get());
 
@@ -587,11 +599,11 @@ void EngineReload(engine_t* ioEngine)
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, trtex, 0);
 
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
             GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
             if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
                 std::cout << "Framebuffer status error : " << fboCheck << std::endl;
-
-            glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
@@ -626,11 +638,11 @@ void EngineReload(engine_t* ioEngine)
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dirtex, 0);
 
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
             GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
             if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
                 std::cout << "Framebuffer status error : " << fboCheck << std::endl;
-
-            glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
@@ -673,17 +685,17 @@ void EngineReload(engine_t* ioEngine)
             glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, dmsctex, 0);
             glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, sctex, 0);
 
-            GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
-            if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
-                std::cout << "Framebuffer status error : " << fboCheck << std::endl;
-
-            GLuint const draw_buffers[3] {
+            static GLuint const draw_buffers[3] {
                 GL_COLOR_ATTACHMENT0,
                 GL_COLOR_ATTACHMENT1,
                 GL_COLOR_ATTACHMENT2,
             };
 
             glDrawBuffers(3, draw_buffers);
+
+            GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+            if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                std::cout << "Framebuffer status error : " << fboCheck << std::endl;
 
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
@@ -712,9 +724,13 @@ void EngineReload(engine_t* ioEngine)
             glBindVertexArray(0u);
 
             glMakeTextureHandleNonResidentARB(handle);
+
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_NONE, 0);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_NONE, 0);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_NONE, 0);
         }
 
-        for (unsigned order = 2; order <= 2; ++order)
+        for (unsigned order = 2; order <= 4; ++order)
         {
             { // scattering density
                 numtk::Vec4_t const resolution{
@@ -732,6 +748,10 @@ void EngineReload(engine_t* ioEngine)
                 glBindFramebuffer(GL_FRAMEBUFFER, fbo);
                 glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dscdtex, 0);
                 glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+                GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+                if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                    std::cout << "Framebuffer status error : " << fboCheck << std::endl;
 
                 glDisable(GL_DEPTH_TEST);
                 glDisable(GL_BLEND);
@@ -783,20 +803,86 @@ void EngineReload(engine_t* ioEngine)
                 glBindVertexArray(0u);
 
                 glMakeTextureHandleNonResidentARB(trhandle);
-                if (order == 2)
-                {
-                    glMakeTextureHandleNonResidentARB(drschandle);
-                    glMakeTextureHandleNonResidentARB(dmschandle);
-                }
-                else
-                {
-                    glMakeTextureHandleNonResidentARB(mschandle);
-                }
+
+                glMakeTextureHandleNonResidentARB(drschandle);
+                glMakeTextureHandleNonResidentARB(dmschandle);
+                glMakeTextureHandleNonResidentARB(mschandle);
 
                 glMakeTextureHandleNonResidentARB(dirhandle);
             }
 
             { // indirect irradiance
+                numtk::Vec2_t const resolution{(float)kIrTexWidth, (float)kIrTexHeight};
+                oglbase::BufferPtr viewportBuffer{};
+                glCreateBuffers(1, viewportBuffer.get());
+                glBindBuffer(GL_UNIFORM_BUFFER, viewportBuffer);
+                glBufferData(GL_UNIFORM_BUFFER,
+                             2 * sizeof(float),
+                             &resolution[0],
+                             GL_STATIC_DRAW);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dirtex, 0);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, iirtex, 0);
+
+                static GLuint const draw_buffers[2] {
+                    GL_COLOR_ATTACHMENT0,
+                    GL_COLOR_ATTACHMENT1,
+                };
+
+                glDrawBuffers(2, draw_buffers);
+
+                GLenum fboCheck = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
+                if (fboCheck != GL_FRAMEBUFFER_COMPLETE)
+                    std::cout << "Framebuffer status error : " << fboCheck << std::endl;
+
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_ONE, GL_ONE);
+
+                glDisablei(GL_BLEND, 0);
+                glEnablei(GL_BLEND, 1);
+
+                glDisable(GL_DEPTH_TEST);
+
+                glViewport(0, 0, kIrTexWidth, kIrTexHeight);
+
+                glUseProgram(skyiirprog);
+
+                glBindBufferBase(GL_UNIFORM_BUFFER, 0u, viewportBuffer);
+                glBindBufferBase(GL_UNIFORM_BUFFER, 1u, atmosphereBuffer);
+
+                GLuint64 drschandle = glGetTextureSamplerHandleARB(drsctex, sampler);
+                GLuint64 dmschandle = glGetTextureSamplerHandleARB(dmsctex, sampler);
+                GLuint64 mschandle = glGetTextureSamplerHandleARB(msctex, sampler);
+
+                glMakeTextureHandleResidentARB(drschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyiirprog, "drsctex"),
+                                       drschandle);
+
+                glMakeTextureHandleResidentARB(dmschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyiirprog, "dmsctex"),
+                                       dmschandle);
+
+                glMakeTextureHandleResidentARB(mschandle);
+                glUniformHandleui64ARB(glGetUniformLocation(skyiirprog, "msctex"),
+                                       mschandle);
+
+                glUniform1f(glGetUniformLocation(skyiirprog, "scatorder"),
+                            (float)order);
+
+                glUniform1f(glGetUniformLocation(skyiirprog, "nu_tex_size"),
+                            (float)kScNuSize);
+
+                glBindVertexArray(vao);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glBindVertexArray(0u);
+
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_NONE, 0);
+                glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_NONE, 0);
+
+                glMakeTextureHandleNonResidentARB(drschandle);
+                glMakeTextureHandleNonResidentARB(dmschandle);
+                glMakeTextureHandleNonResidentARB(mschandle);
             }
 
             { // multiple scattering
@@ -1499,4 +1585,8 @@ oglbase::ShaderSources_t const skysscatfrag{
 
 oglbase::ShaderSources_t const skyscatdfrag{
     #include "scatteringdensity.frag.glsl"
+};
+
+oglbase::ShaderSources_t const skyiirfrag{
+    #include "indirectirradiance.frag.glsl"
 };

@@ -1623,7 +1623,7 @@ oglbase::ShaderSources_t const rtvert{ "#version 430 core\n", R"__lstr__(
         )__lstr__"};
 
 oglbase::ShaderSources_t const rtfrag{
-    #include "voxeltraversal.frag.glsl"
+    #include "voxeltraversal.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const layeredgeom{ R"__lstr__(
@@ -1645,25 +1645,25 @@ EmitVertex();
 )__lstr__" };
 
 oglbase::ShaderSources_t const skytrfrag{
-    #include "transmittance.frag.glsl"
+    #include "transmittance.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const skydirfrag{
-    #include "directirradiance.frag.glsl"
+    #include "directirradiance.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const skysscatfrag{
-    #include "singlescattering.frag.glsl"
+    #include "singlescattering.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const skyscatdfrag{
-    #include "scatteringdensity.frag.glsl"
+    #include "scatteringdensity.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const skyiirfrag{
-    #include "indirectirradiance.frag.glsl"
+    #include "indirectirradiance.frag.glsl.inc"
 };
 
 oglbase::ShaderSources_t const skymscatfrag{
-    #include "multiplescattering.frag.glsl"
+    #include "multiplescattering.frag.glsl.inc"
 };

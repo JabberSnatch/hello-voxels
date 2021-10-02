@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 delta_irradiance;
@@ -170,5 +168,3 @@ void main()
     delta_irradiance = irradiance_sum;
     irradiance = delta_irradiance;
 }
-
-)__lstr__"

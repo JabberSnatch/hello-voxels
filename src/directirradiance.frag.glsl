@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 delta_irradiance;
@@ -75,5 +73,3 @@ void main()
 
     delta_irradiance = atmos.sun_irradiance * average_cosine_factor * texture(trtex, uv).xyz;
 }
-
-)__lstr__"

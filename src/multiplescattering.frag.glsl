@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 delta_multiple_scattering;
@@ -229,5 +227,3 @@ void main()
     delta_multiple_scattering = rayleigh_mie_sum;
     scattering = vec4(delta_multiple_scattering / RayleighPhaseFunction(nu), 0.0);
 }
-
-)__lstr__"

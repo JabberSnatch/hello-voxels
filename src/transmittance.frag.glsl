@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 transmittance;
@@ -103,5 +101,3 @@ void main() {
     vec2 rmu = TransmittanceUVtoRMu(uv);
     transmittance = Transmittance(rmu.x, rmu.y);
 }
-
-)__lstr__"

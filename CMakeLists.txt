@@ -23,9 +23,40 @@ add_subdirectory(src/quick_vdb)
 
 add_subdirectory(src/oglbase)
 
-add_library(engine SHARED ${SOURCE_DIR}/proto.cc ${SOURCE_DIR}/rng.cc)
-target_link_libraries(engine PRIVATE oglbase qvdb)
+set(SHADER_SOURCES
+  ${SOURCE_DIR}/voxeltraversal.frag.glsl
+  ${SOURCE_DIR}/transmittance.frag.glsl
+  ${SOURCE_DIR}/directirradiance.frag.glsl
+  ${SOURCE_DIR}/singlescattering.frag.glsl
+  ${SOURCE_DIR}/scatteringdensity.frag.glsl
+  ${SOURCE_DIR}/indirectirradiance.frag.glsl
+  ${SOURCE_DIR}/multiplescattering.frag.glsl
+  )
 
+set(SHADER_INCLUDES)
+set(SHADER_INCLUDE_PATH "${CMAKE_CURRENT_BINARY_DIR}/include/shaders")
+foreach (INPUT_SHADER IN LISTS SHADER_SOURCES)
+  cmake_path(GET INPUT_SHADER FILENAME FILENAME)
+  set(OUTPUT_FILE "${SHADER_INCLUDE_PATH}/${FILENAME}.inc")
+  list(APPEND SHADER_INCLUDES ${OUTPUT_FILE})
+  if (${CMAKE_GENERATOR} STREQUAL "Ninja")
+	set(COMMAND sed -e '1 i R\"__lstr__\(' -e '$$ a \)__lstr__\"' ${INPUT_SHADER} > ${OUTPUT_FILE})
+  else()
+	set(COMMAND sed -e '1 i R\"__lstr__\(' -e '$ a \)__lstr__\"' ${INPUT_SHADER} > ${OUTPUT_FILE})
+  endif()
+  add_custom_command(OUTPUT ${OUTPUT_FILE}
+	COMMAND ${COMMAND}
+	DEPENDS ${INPUT_SHADER}
+	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+	)
+endforeach()
+
+add_custom_target(shaders DEPENDS ${SHADER_INCLUDES})
+
+add_library(engine SHARED ${SOURCE_DIR}/proto.cc ${SOURCE_DIR}/rng.cc)
+add_dependencies(engine shaders)
+target_link_libraries(engine PRIVATE oglbase qvdb)
+target_include_directories(engine PRIVATE ${SHADER_INCLUDE_PATH})
 
 add_executable(explorer ${SOURCE_DIR}/main.cc)
 target_link_libraries(explorer

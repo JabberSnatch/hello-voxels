@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 rayleigh;
@@ -174,4 +172,3 @@ void main()
 
     scattering = vec4(rayleigh, mie.r);
 }
-)__lstr__"

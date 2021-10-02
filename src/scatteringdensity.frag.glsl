@@ -1,5 +1,3 @@
-R"__lstr__(
-
 #version 430 core
 
 layout(location = 0) out vec3 scattering;
@@ -312,5 +310,3 @@ void main()
 
     scattering = scatdensity;
 }
-
-)__lstr__"

@@ -1,4 +1,3 @@
-R"__lstr__(
 #version 430 core
 
 #extension GL_ARB_bindless_texture : require
@@ -227,5 +226,3 @@ void main()
     #endif
     #endif
 }
-
-)__lstr__"

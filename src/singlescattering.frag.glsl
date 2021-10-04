@@ -33,6 +33,7 @@ layout(std140, binding = 1) uniform AtmosphereBlock
 
     vec4 rscat; // rgb + expo_scale
     vec4 mext; // rgb + expo_scale
+    vec4 mscat; // rgb + padding
 
     LinearLayer odensity[2];
     vec4 oext; // rgb + obound
@@ -168,7 +169,7 @@ void main()
     }
 
     rayleigh = rayleigh_sum * dt * atmos.sun_irradiance * atmos.rscat.xyz;
-    mie = mie_sum * dt * atmos.sun_irradiance * atmos.mext.xyz;
+    mie = mie_sum * dt * atmos.sun_irradiance * atmos.mscat.xyz;
 
     scattering = vec4(rayleigh, mie.r);
 }

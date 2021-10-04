@@ -54,9 +54,11 @@ struct atmosphere_t
     float sun_angular_radius;
     numtk::Vec2_t bounds;
     float mus_min;
-    float padding;
+    float padding0;
     numtk::Vec4_t rscat;
     numtk::Vec4_t mext;
+    numtk::Vec3_t mscat;
+    float padding1;
     float odensity[8];
     numtk::Vec4_t oext;
 };
@@ -107,6 +109,14 @@ struct engine_t
     oglbase::SamplerPtr sampler{};
 
     numtk::SH2nd_t sh_data[3];
+
+    oglbase::BufferPtr atmosBuffer{};
+    oglbase::TexturePtr trtex{};
+    GLuint64 trhandle{};
+    oglbase::TexturePtr iirtex{};
+    GLuint64 iirhandle{};
+    oglbase::TexturePtr sctex{};
+    GLuint64 schandle{};
 
     oglbase::TexturePtr chunk_texture{};
     GLuint64 chunk_handle{};
@@ -463,7 +473,7 @@ void EngineReload(engine_t* ioEngine)
         glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-        oglbase::TexturePtr trtex{};
+        oglbase::TexturePtr& trtex = ioEngine->trtex;
         glCreateTextures(GL_TEXTURE_2D, 1, trtex.get());
         glBindTexture(GL_TEXTURE_2D, trtex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kTrTexWidth, kTrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
@@ -475,13 +485,13 @@ void EngineReload(engine_t* ioEngine)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        oglbase::TexturePtr iirtex{};
+        oglbase::TexturePtr& iirtex = ioEngine->iirtex;
         glCreateTextures(GL_TEXTURE_2D, 1, iirtex.get());
         glBindTexture(GL_TEXTURE_2D, iirtex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, kIrTexWidth, kIrTexHeight, 0, GL_RGB, GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        oglbase::TexturePtr sctex{};
+        oglbase::TexturePtr& sctex = ioEngine->sctex;
         glCreateTextures(GL_TEXTURE_3D, 1, sctex.get());
         glBindTexture(GL_TEXTURE_3D, sctex);
         glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA32F, kScTexWidth, kScTexHeight, kScTexDepth, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -563,9 +573,12 @@ void EngineReload(engine_t* ioEngine)
         numtk::Vec4_t rscat{ lar[0], lar[1], lar[2], -1.f / 8.e3f };
 
         //kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha);
+        // (kMieAnstromAlpha set to 0.0)
         float mie = 5.328e-3f / 1.2e3f;
-        numtk::Vec4_t mext{ .9f * mie, .9f * mie, .9f * mie, -1.f / 1.2e3f };
+        numtk::Vec4_t mext{ mie, mie, mie, -1.f / 1.2e3f };
         std::cout << "mie ext " << mext[0] << " " << mext[1] << " " << mext[2] << std::endl;
+
+        numtk::Vec3_t mscat{ .9f * mext[0], .9f * mext[1], .9f * mext[2] };
 
         float ozone = 300.f * 2.687e20f / 1.5e4f;
         numtk::Vec4_t oext{ 4.228e-26f * ozone, 4.305e-25f * ozone, 2.316e-26f * ozone, 2.5e4f };
@@ -576,12 +589,13 @@ void EngineReload(engine_t* ioEngine)
             { 6.36e6f, 6.42e6f },//numtk::Vec2_t bounds;
             std::cos(102.f * (numtk::kPi / 180.f)),
             0.f,
-            rscat, mext,
+            rscat, mext, mscat,
+            0.f,
             { 1.f / 1.5e4f, -2.f / 3.f, 0.f, 0.f, -1.f / 1.5e4f, 8.f / 3.f, 0.f, 0.f },//float odensity[4];
             oext
         };
 
-        oglbase::BufferPtr atmosphereBuffer{};
+        oglbase::BufferPtr& atmosphereBuffer = ioEngine->atmosBuffer;
         glCreateBuffers(1, atmosphereBuffer.get());
 
         glBindBuffer(GL_UNIFORM_BUFFER, atmosphereBuffer);
@@ -998,6 +1012,13 @@ void EngineReload(engine_t* ioEngine)
         glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glSamplerParameteri(ioEngine->sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
+        ioEngine->trhandle = glGetTextureSamplerHandleARB(ioEngine->trtex, ioEngine->sampler);
+        glMakeTextureHandleResidentARB(ioEngine->trhandle);
+        ioEngine->iirhandle = glGetTextureSamplerHandleARB(ioEngine->iirtex, ioEngine->sampler);
+        glMakeTextureHandleResidentARB(ioEngine->iirhandle);
+        ioEngine->schandle = glGetTextureSamplerHandleARB(ioEngine->sctex, ioEngine->sampler);
+        glMakeTextureHandleResidentARB(ioEngine->schandle);
+
         for (int chunkIndex = 0; chunkIndex < engine_t::kChunkLoadCount; ++chunkIndex)
         {
             engine_t::ChunkResources& chunk = ioEngine->chunks[chunkIndex];
@@ -1411,6 +1432,11 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
 
         glUseProgram(ioEngine->shader_program);
         {
+            numtk::Vec3_t const wscampos = ioEngine->campos();
+            int const wscampos_loc = glGetUniformLocation(ioEngine->shader_program, "iWSCamPos");
+            if (wscampos_loc >= 0)
+                glUniform3fv(wscampos_loc, 1, &wscampos[0]);
+
             int const projmat_loc = glGetUniformLocation(ioEngine->shader_program, "iInvProj");
             if (projmat_loc >= 0)
                 glUniformMatrix4fv(projmat_loc, 1, GL_FALSE, &ioEngine->projection_invmatrix[0]);
@@ -1427,7 +1453,30 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             int const chunkExtent_loc = glGetUniformLocation(ioEngine->shader_program, "iChunkExtent");
             if (chunkExtent_loc >= 0)
                 glUniform1f(chunkExtent_loc, (float)engine_t::kChunkSize);
+
+            numtk::Vec3_t const sundir = {
+                0.0, //std::cos(2.9f) * std::sin(1.3f),
+                1.0, //std::cos(1.3f),
+                0.0, //std::sin(2.9f) * std::sin(1.3f)
+            };
+            int const sundir_loc = glGetUniformLocation(ioEngine->shader_program, "iSunDir");
+            if (sundir_loc >= 0)
+                glUniform3fv(sundir_loc, 1, &sundir[0]);
+
+            int const trhandle_loc = glGetUniformLocation(ioEngine->shader_program, "trtex");
+            if (trhandle_loc >= 0)
+                glUniformHandleui64ARB(trhandle_loc, ioEngine->trhandle);
+
+            int const iirhandle_loc = glGetUniformLocation(ioEngine->shader_program, "iirtex");
+            if (iirhandle_loc >= 0)
+                glUniformHandleui64ARB(iirhandle_loc, ioEngine->iirhandle);
+
+            int const schandle_loc = glGetUniformLocation(ioEngine->shader_program, "sctex");
+            if (schandle_loc >= 0)
+                glUniformHandleui64ARB(schandle_loc, ioEngine->schandle);
         }
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0u, ioEngine->atmosBuffer);
 
         {
             // SH preparation
@@ -1491,7 +1540,6 @@ void EngineRunFrame(engine_t* ioEngine, input_t const* iInput)
             glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&sh_reduced[1]);
             loc = glGetUniformLocation(ioEngine->shader_program, "iSHBuffer_blue");
             glUniform1fv(loc, sizeof(numtk::SH2nd_t), (float*)&sh_reduced[2]);
-
         }
 
         glEnable(GL_DEPTH_TEST);

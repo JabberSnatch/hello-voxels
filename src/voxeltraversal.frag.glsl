@@ -12,6 +12,7 @@ vec3 raydir_frommat(mat4 perspective_inverse, vec2 clip_coord)
 
 float maxc(vec3 v) {return max(max(v.x, v.y), v.z); }
 
+uniform vec3 iWSCamPos;
 uniform mat4 iInvProj;
 uniform vec2 iResolution;
 
@@ -21,24 +22,173 @@ layout(bindless_sampler) uniform sampler3D iChunk;
 uniform float iChunkExtent;
 uniform vec3 iChunkLocalCamPos; // Normalized on chunk size
 
+#define kPi 3.1415926536
+
+#define SPHERICAL_HARMONICS
+#ifdef SPHERICAL_HARMONICS
 uniform float iSHBuffer_red[9];
 uniform float iSHBuffer_green[9];
 uniform float iSHBuffer_blue[9];
+#endif
 
-#if 0
-layout(std140, binding = 0) uniform SHBlock
+#define CLEARSKY_MODEL
+#ifdef CLEARSKY_MODEL
+uniform vec3 iSunDir;
+layout(bindless_sampler) uniform sampler2D trtex;
+layout(bindless_sampler) uniform sampler2D irrtex;
+layout(bindless_sampler) uniform sampler3D sctex;
+
+struct LinearLayer
 {
-    float r[9];
-    float g[9];
-    float b[9];
-} iSHBuffer;
+    float linear;
+    float constant;
+    vec2 padding;
+};
+
+#define SCTEX_NU_SIZE 8.0
+
+layout(std140, binding = 0) uniform AtmosphereBlock
+{
+    vec3 sun_irradiance;
+    float sun_angular_radius;
+
+    vec2 bounds;
+    float mus_min;
+    float padding;
+
+    vec4 rscat; // rgb + expo_scale
+    vec4 mext; // rgb + expo_scale
+    vec4 mscat; // rgb + padding
+
+    LinearLayer odensity[2];
+    vec4 oext; // rgb + obound
+} atmos;
+
+float ExtBoundaryDistance(float r, float mu)
+{
+    float delta = r*r * (mu*mu - 1.0) + atmos.bounds[1]*atmos.bounds[1];
+    return max(-r * mu + sqrt(max(delta, 0.0)), 0.0);
+}
+
+vec4 SampleScattering(sampler3D lut, vec4 texCoords)
+{
+    float pixelSpace_x = texCoords.x * (SCTEX_NU_SIZE - 1.0);
+    float fragCoord_x = floor(pixelSpace_x);
+    float interp = fract(pixelSpace_x);
+    vec3 uvw0 = vec3((fragCoord_x + texCoords.y) / SCTEX_NU_SIZE, texCoords.z, texCoords.w);
+    vec3 uvw1 = vec3((fragCoord_x + 1.0 + texCoords.y) / SCTEX_NU_SIZE, texCoords.z, texCoords.w);
+    return mix(texture(lut, uvw0), texture(lut, uvw1), interp);
+}
+
+vec2 TransmittanceRMutoUV(float r, float mu)
+{
+    vec2 boundssqr = atmos.bounds * atmos.bounds;
+    float H = sqrt(boundssqr[1] - boundssqr[0]);
+    float rho = sqrt(max(0.0, r*r - boundssqr[0]));
+    float d = ExtBoundaryDistance(r, mu);
+    float d_min = atmos.bounds[1] - r;
+    float d_max = rho + H;
+    float u = (d - d_min) / (d_max - d_min);
+    float v = rho / H;
+    return vec2(u, v);
+}
+
+vec4 ScatteringRMuVMuSNutoTexCoords(float r, float muv, float mus, float nu,
+                                    bool ray_hits_ground)
+{
+    vec2 boundssqr = atmos.bounds * atmos.bounds;
+    float H = sqrt(boundssqr[1] - boundssqr[0]);
+    float rho = sqrt(max(r*r - boundssqr[0], 0.0));
+    float u_r = clamp(rho/H, 0.0, 1.0);
+
+    float rmuv = r * muv;
+    float delta = rmuv*rmuv - r*r + boundssqr[0];
+    float u_muv = 0.0;
+    if (ray_hits_ground)
+    {
+        float d = -rmuv - sqrt(max(delta, 0.0));
+        float dmin = r - atmos.bounds[0];
+        float dmax = rho;
+        float tex = (dmax != dmin) ? (d - dmin) / (dmax - dmin) : 0.0;
+        u_muv = 0.5 - 0.5 * tex;
+    }
+    else
+    {
+        float d = -rmuv - sqrt(max(delta + H*H, 0.0));
+        float dmin = atmos.bounds[1] - r;
+        float dmax = rho + H;
+        float tex = (d - dmin) / (dmax - dmin);
+        u_muv = 0.5 + 0.5 * tex;
+    }
+
+    float d = ExtBoundaryDistance(atmos.bounds[0], mus);
+    float dmin = atmos.bounds[1] - atmos.bounds[0];
+    float dmax = H;
+    float a = (d - dmin) / (dmax - dmin);
+    float D = ExtBoundaryDistance(atmos.bounds[0], atmos.mus_min);
+    float A = (D - dmin) / (dmax - dmin);
+    float u_mus = max(1.0 - a / A, 0.0) / (1.0 + a);
+    float u_nu = (nu + 1.0) / 2.0;
+
+    return vec4(u_nu, u_mus, u_muv, u_r);
+}
+
+float RayleighPhaseFunction(float cos_mu)
+{
+    return (3.0 * (1.0 + cos_mu*cos_mu)) / (16.0 * kPi);
+}
+
+float MiePhaseFunction(float cos_mu)
+{
+    #define kMieG 0.8
+
+    const float g = kMieG;
+    float gsqr = g*g;
+    float t0 = 3.0 / (8.0 * kPi);
+    float t1 = (1.0 - gsqr) / (2.0 + gsqr);
+    float t2 = (1.0 + cos_mu*cos_mu) / pow(1.0 + gsqr - 2.0 * g * cos_mu, 1.5);
+    return t0*t1*t2;
+
+    #undef kMieG
+}
+
+vec3 SkyRadiance(vec3 ro, vec3 rd, vec3 sundir, out vec3 tr)
+{
+    const float r = max(atmos.bounds[0], atmos.bounds[0] + ro.y);
+
+    #define LAT (90.0 - 47.47) * 3.1415926536 / 180.0
+    #define LONG -0.55968 * 3.1415926536 / 180.0
+    const vec3 sphpos = r * vec3(0.0, 1.0, 0.0);
+    //vec3(cos(LONG) * sin(LAT), cos(LAT), sin(LONG) * sin(LAT));
+    #undef LAT
+    #undef LONG
+
+    const float muv = dot(sphpos, rd) / r;
+    const float mus = dot(sphpos, sundir) / r;
+    const float nu = dot(rd, sundir);
+
+    // Transmittance to upper atmosphere boundary
+    tr = texture(trtex, TransmittanceRMutoUV(r, muv)).xyz;
+    vec4 texCoords = ScatteringRMuVMuSNutoTexCoords(r, muv, mus, nu, false);
+    vec4 scattering_mie = SampleScattering(sctex, texCoords);
+    vec3 rayleigh = scattering_mie.xyz;
+    vec3 mie = vec3(0.0);
+    if (rayleigh.x > 0.0)
+    {
+        mie = rayleigh * scattering_mie.w / rayleigh.x *
+            (atmos.rscat.x / atmos.mscat.x) *
+            (atmos.mscat.xyz / atmos.rscat.xyz);
+    }
+
+    //return vec3(fract(texCoords.z));
+    return rayleigh * RayleighPhaseFunction(nu) + mie * MiePhaseFunction(nu);
+}
 #endif
 
 layout(location = 0) out vec4 color;
 
 void sh_second_order(vec3 w, out float v[9])
 {
-    const float kPi = 3.1415926535f;
     const float kInvPi = 1.f / kPi;
 
     v[0] = .5 * sqrt(kInvPi);
@@ -70,8 +220,14 @@ void main()
     vec2 frag_coord = vec2(gl_FragCoord.xy);
     vec2 clip_coord = ((frag_coord / iResolution) - 0.5) * 2.0;
 
-    vec3 rd = raydir_frommat(iInvProj, clip_coord);
+    const vec3 rd = raydir_frommat(iInvProj, clip_coord);
     vec3 ro = iChunkLocalCamPos;// - vec3(0.5);
+
+#if 0
+    vec3 tr = vec3(0.0);
+    color.xyz = SkyRadiance(iWSCamPos, rd, iSunDir, tr);
+    return;
+#endif
 
     vec3 n = vec3(0.0);
 
@@ -199,11 +355,13 @@ void main()
     {
         //color.xyz = mix(vec3(0.5), vec3(puvw * (0.1 / distance(puvw,start))), accum.x);
         //distance(puvw, start));//puvw * 0.5;// + vec3(0.5);
+#ifdef SPHERICAL_HARMONICS
         float nsh[9];
         sh_second_order(n, nsh);
         vec3 Li = vec3(sh_dot(nsh, iSHBuffer_red),
                        sh_dot(nsh, iSHBuffer_green),
                        sh_dot(nsh, iSHBuffer_blue));
+#endif
 
         //color.xyz = vec3(0.7, 0.6, 0.2) * vec3(exp(-distance(iChunkLocalCamPos, puvw) / 10.0)) * dot(n, vec3(0.5, 1.0, 0.5));
         vec3 voxel_index = floor(puvw) + vec3(16.0);
@@ -215,13 +373,24 @@ void main()
             vec3(0.207843137255, 0.211764705882, 0.196078431373) * abs(min(0.0, n[1])) * 0.f;
         groundcolor *= 2.f;
 
-        color.xyz = mix(vec3(0.36, 0.4, 0.58), Li, min(1.0, exp(1.f-distance(iChunkLocalCamPos, puvw) / 2.f)));
-        color.xyz = color.xyz * groundcolor;
+        color.xyz = groundcolor;
+
+#ifdef SPHERICAL_HARMONICS
+        color.xyz = mix(vec3(0.36, 0.4, 0.58), Li, min(1.0, exp(1.f-distance(iChunkLocalCamPos, puvw) / 2.f)))
+            * groundcolor;
+#endif
+
         gl_FragDepth = distance(iChunkLocalCamPos, puvw) / 1000.f;
     }
     else
     {
+#ifdef CLEARSKY_MODEL
+        vec3 tr = vec3(0.0);
+        color.xyz = SkyRadiance(iWSCamPos, rd, iSunDir, tr);
+        gl_FragDepth = 0.99;
+#else
         discard;
+#endif
     }
     #endif
     #endif

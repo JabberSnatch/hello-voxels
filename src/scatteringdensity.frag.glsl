@@ -37,6 +37,7 @@ layout(std140, binding = 1) uniform AtmosphereBlock
 
     vec4 rscat; // rgb + expo_scale
     vec4 mext; // rgb + expo_scale
+    vec4 mscat; // rgb + padding
 
     LinearLayer odensity[2];
     vec4 oext; // rgb + obound
@@ -303,7 +304,7 @@ void main()
             float dsampledir = dtheta * dphi * sin_theta;
 
             scatdensity += Li * (atmos.rscat.xyz * rayleigh_density * RayleighPhaseFunction(nu1)
-                                 + atmos.mext.xyz * mie_density * MiePhaseFunction(kMieG, nu1))
+                                 + atmos.mscat.xyz * mie_density * MiePhaseFunction(kMieG, nu1))
                                  * dsampledir;
         }
     }
